@@ -1,0 +1,77 @@
+server:
+  port: 8080
+
+logging:
+  pattern:
+    level: "%5p [${spring.application.name:},%X{traceId:-},%X{spanId:-}]"
+  level:
+    com.btc.nplus1: DEBUG
+    org.springframework.boot.actuate.autoconfigure.tracing: DEBUG
+    io.micrometer.tracing: DEBUG
+    # This specific logger triggers the "Session Metrics" summary block in the console
+    org.hibernate.stat: DEBUG
+    org.hibernate.engine.internal.StatisticalLoggingSessionEventListener: DEBUG
+
+spring:
+  application:
+    name: nplus1
+
+  # Database configuration pointing to Dockerized Postgres
+  datasource:
+    url: jdbc:postgresql://localhost:5432/ecommerce
+    username: postgres
+    password: password
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      pool-name: HikariPool-Orders
+      maximum-pool-size: 5
+      minimum-idle: 2
+      connection-timeout: 1000 # 1 seconds fail-fast to show pool exhaustion quickly
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  # Hibernate & Schema Generation
+  jpa:
+    hibernate:
+      ddl-auto: update # Automatically creates tables, columns, indexes, and FKs
+    open-in-view: false # Production standard: avoid holding connections open during view rendering
+    show-sql: true # Keep false to avoid terminal spam; rely on statistics
+    properties:
+      hibernate:
+        format_sql: false
+        generate_statistics: true # Essential for logging JDBC statements count
+        session_event_listeners: org.hibernate.engine.internal.StatisticalLoggingSessionEventListener
+        jdbc:
+          batch_size: 50
+        order_inserts: true
+        order_updates: true
+
+# Observability Configuration
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "health,info,metrics,prometheus"
+  endpoint:
+    health:
+      show-details: always
+    prometheus:
+      enabled: true
+
+  # Metrics & Distribution Percentiles
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      percentiles[http.server.requests]: 0.5, 0.95, 0.99
+      percentiles-histogram[http.server.requests]: true
+      sla[http.server.requests]: 100ms, 500ms, 1s
+
+  # OpenTelemetry Tracing Export
+  tracing:
+    enabled: true
+    sampling:
+      probability: 1.0 # 100% trace sampling
+  otlp:
+    tracing:
+      endpoint: http://localhost:4318/v1/traces
