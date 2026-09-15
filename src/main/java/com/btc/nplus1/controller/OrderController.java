@@ -38,9 +38,7 @@ public class OrderController {
             @RequestParam(defaultValue = "nplus1") String strategy,
             @RequestParam(defaultValue = "50") int limit) {
 
-        log.info("Received getOrders request: strategy={}, limit={}", strategy, limit);
         List<CustomerOrderResponse> response = orderService.getOrders(strategy, limit);
-        log.info("Finished getOrders request: returning {} items", response.size());
         return ResponseEntity.ok(response);
     }
 

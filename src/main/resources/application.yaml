@@ -8,9 +8,12 @@ logging:
     com.btc.nplus1: DEBUG
     org.springframework.boot.actuate.autoconfigure.tracing: DEBUG
     io.micrometer.tracing: DEBUG
-    # This specific logger triggers the "Session Metrics" summary block in the console
+    # Session Metrics logging in Hibernate 7 (Spring Boot 4)
+    org.hibernate.session.metrics: DEBUG
     org.hibernate.stat: DEBUG
+    org.hibernate.statistics: DEBUG
     org.hibernate.engine.internal.StatisticalLoggingSessionEventListener: DEBUG
+    org.hibernate.SQL: INFO
 
 spring:
   application:
@@ -35,12 +38,11 @@ spring:
     hibernate:
       ddl-auto: update # Automatically creates tables, columns, indexes, and FKs
     open-in-view: false # Production standard: avoid holding connections open during view rendering
-    show-sql: true # Keep false to avoid terminal spam; rely on statistics
+    show-sql: true # Prints raw SQL statements
     properties:
       hibernate:
         format_sql: false
-        generate_statistics: true # Essential for logging JDBC statements count
-        session_event_listeners: org.hibernate.engine.internal.StatisticalLoggingSessionEventListener
+        generate_statistics: true # Essential for logging statement counts & metrics
         jdbc:
           batch_size: 50
         order_inserts: true
