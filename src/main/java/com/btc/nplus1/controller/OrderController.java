@@ -1,10 +1,12 @@
 package com.btc.nplus1.controller;
 
+import com.btc.nplus1.dto.CursorResponse;
 import com.btc.nplus1.dto.CustomerOrderResponse;
 import com.btc.nplus1.dto.OrderSummaryResponse;
 import com.btc.nplus1.service.OrderService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.Page;
 import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -47,5 +49,26 @@ public class OrderController {
     public ResponseEntity<List<OrderSummaryResponse>> getOrderSummaries() {
         log.info("Received getOrderSummaries request");
         return ResponseEntity.ok(orderService.getSummary());
+    }
+
+    @GetMapping("/offset")
+    public ResponseEntity<Page<OrderSummaryResponse>> getOrdersOffset(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(orderService.getOrdersOffset(page, size));
+    }
+
+    @GetMapping("/keyset")
+    public ResponseEntity<CursorResponse<OrderSummaryResponse>> getOrdersKeyset(
+            @RequestParam(required = false) String cursor,
+            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(orderService.getOrdersKeyset(cursor, size));
+    }
+
+    @GetMapping("/deferred")
+    public ResponseEntity<List<OrderSummaryResponse>> getOrdersDeferred(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(orderService.getOrdersDeferred(page, size));
     }
 }

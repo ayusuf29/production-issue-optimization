@@ -1,15 +1,17 @@
 package com.btc.nplus1.service;
 
 import com.btc.nplus1.domain.CustomerOrder;
-import com.btc.nplus1.dto.CustomerOrderResponse;
-import com.btc.nplus1.dto.OrderItemResponse;
-import com.btc.nplus1.dto.OrderSummaryResponse;
+import com.btc.nplus1.dto.*;
 import com.btc.nplus1.repository.OrderRepository;
 import io.micrometer.observation.annotation.Observed;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.util.Base64;
 import java.util.List;
 
 @Service
@@ -56,6 +58,63 @@ public class OrderService {
                         order.getCreatedAt()
                 ))
                 .toList();
+    }
+
+    @Observed(name = "order.service.offset", contextualName = "OrderService#getOrdersOffset")
+    @Transactional(readOnly = true)
+    public Page<OrderSummaryResponse> getOrdersOffset(int page, int size) {
+        Page<CustomerOrder> orderPage = orderRepository.findAllOffset(PageRequest.of(page, size));
+        return orderPage.map(this::toSummary);
+    }
+
+    @Observed(name = "order.service.keyset", contextualName = "OrderService#getOrdersKeyset")
+    @Transactional(readOnly = true)
+    public CursorResponse<OrderSummaryResponse> getOrdersKeyset(String cursorToken, int size) {
+        // Fetch size + 1 to check if there is a next page without a separate count query
+        PageRequest limit = PageRequest.of(0, size + 1);
+        List<CustomerOrder> orders;
+
+        if (cursorToken == null || cursorToken.isBlank()) {
+            orders = orderRepository.findFirstKeysetPage(limit);
+        } else {
+            OrderCursor cursor = decodeCursor(cursorToken);
+            orders = orderRepository.findNextKeysetPage(cursor.createdAt(), cursor.id(), limit);
+        }
+
+        boolean hasMore = orders.size() > size;
+        List<CustomerOrder> results = hasMore ? orders.subList(0, size) : orders;
+
+        String nextCursor = null;
+        if (hasMore && !results.isEmpty()) {
+            CustomerOrder last = results.get(results.size() - 1);
+            nextCursor = encodeCursor(new OrderCursor(last.getCreatedAt(), last.getId()));
+        }
+
+        return new CursorResponse<>(results.stream().map(this::toSummary).toList(), nextCursor, hasMore);
+    }
+
+    @Observed(name = "order.service.deferred", contextualName = "OrderService#getOrdersDeferred")
+    @Transactional(readOnly = true)
+    public List<OrderSummaryResponse> getOrdersDeferred(int page, int size) {
+        int offset = page * size;
+        return orderRepository.findByDeferredJoin(offset, size).stream()
+                .map(this::toSummary)
+                .toList();
+    }
+
+    private OrderSummaryResponse toSummary(CustomerOrder o) {
+        return new OrderSummaryResponse(o.getId(), o.getOrderNumber(), o.getCreatedAt());
+    }
+
+    private String encodeCursor(OrderCursor cursor) {
+        String raw = cursor.createdAt().toEpochMilli() + ":" + cursor.id();
+        return Base64.getUrlEncoder().encodeToString(raw.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private OrderCursor decodeCursor(String token) {
+        String raw = new String(Base64.getUrlDecoder().decode(token), StandardCharsets.UTF_8);
+        String[] parts = raw.split(":");
+        return new OrderCursor(Instant.ofEpochMilli(Long.parseLong(parts[0])), Long.parseLong(parts[1]));
     }
 
     private CustomerOrderResponse mapToResponse(CustomerOrder order) {

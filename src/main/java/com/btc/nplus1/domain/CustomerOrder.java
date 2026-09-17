@@ -7,7 +7,7 @@ import java.util.List;
 
 @Entity
 @Table(name = "customer_orders", indexes = {
-        @Index(name = "idx_orders_created_at", columnList = "createdAt")
+        @Index(name = "idx_orders_created_id", columnList = "created_at DESC, id DESC")
 })
 public class CustomerOrder {
 

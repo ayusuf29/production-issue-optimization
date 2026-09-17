@@ -10,7 +10,7 @@
 	</parent>
 	<groupId>com.btc</groupId>
 	<artifactId>nplus1</artifactId>
-	<version>0.0.1-SNAPSHOT</version>
+	<version>0.0.2-SNAPSHOT</version>
 	<name/>
 	<description/>
 	<url/>
@@ -29,7 +29,7 @@
 	<properties>
 		<java.version>25</java.version>
 	</properties>
-<dependencies>
+	<dependencies>
 		<!-- Web & Data JPA -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
@@ -41,7 +41,7 @@
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
-			<artifactId>spring-boot-starter-aop</artifactId>
+			<artifactId>spring-boot-starter-aspectj</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>org.postgresql</groupId>
