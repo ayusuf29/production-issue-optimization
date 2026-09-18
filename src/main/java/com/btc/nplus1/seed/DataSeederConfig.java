@@ -9,10 +9,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Profile;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -70,7 +71,7 @@ public class DataSeederConfig {
                         String randomSku = CATALOG_SKUS[ThreadLocalRandom.current().nextInt(CATALOG_SKUS.length)];
                         int quantity = ThreadLocalRandom.current().nextInt(1, 4);
                         BigDecimal price = BigDecimal.valueOf(ThreadLocalRandom.current().nextDouble(25.0, 450.0))
-                                .setScale(2, BigDecimal.ROUND_HALF_UP);
+                                .setScale(2, RoundingMode.HALF_UP);
 
                         OrderItem item = new OrderItem(randomSku, quantity, price);
                         order.addItem(item);
@@ -92,5 +93,10 @@ public class DataSeederConfig {
             log.info("Seeding complete in {} ms! Seeded 30 users, {} orders, and {} total items.",
                     elapsed, totalOrdersCreated, totalItemsCreated);
         };
+    }
+
+    @Bean
+    public DataSeederOrderItem dataSeederOrderItem(JdbcTemplate jdbcTemplate) {
+        return new DataSeederOrderItem(jdbcTemplate);
     }
 }
