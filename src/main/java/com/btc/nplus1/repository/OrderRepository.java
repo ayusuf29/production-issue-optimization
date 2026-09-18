@@ -50,17 +50,15 @@ public interface OrderRepository extends JpaRepository<CustomerOrder, Long> {
 
         // 4. Deferred Join: Keyset Seek using Index Subquery for Arbitrary Page Jumps
         @Query(value = """
-            WITH target_cursor AS (
-                SELECT created_at, id
-                FROM customer_orders
-                ORDER BY created_at DESC, id DESC
-                LIMIT 1 OFFSET :offset
-            )
-            SELECT o.*
-            FROM customer_orders o, target_cursor c
-            WHERE (o.created_at, o.id) <= (c.created_at, c.id)
-            ORDER BY o.created_at DESC, o.id DESC
-            LIMIT :limit
+        SELECT o.* 
+        FROM customer_orders o
+        INNER JOIN (
+            SELECT id 
+            FROM customer_orders 
+            ORDER BY created_at DESC, id DESC 
+            LIMIT :limit OFFSET :offset
+        ) target ON o.id = target.id
+        ORDER BY o.created_at DESC, o.id DESC
         """, nativeQuery = true)
         List<CustomerOrder> findByDeferredJoin(
                 @Param("offset") int offset,

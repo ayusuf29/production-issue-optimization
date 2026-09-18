@@ -67,7 +67,13 @@ management:
     distribution:
       percentiles[http.server.requests]: 0.5, 0.95, 0.99
       percentiles-histogram[http.server.requests]: true
-      sla[http.server.requests]: 100ms, 500ms, 1s
+      sla[http.server.requests]: 50ms, 100ms, 500ms, 1s, 2s
+      percentiles[order.service.offset]: 0.5, 0.95, 0.99
+      percentiles-histogram[order.service.offset]: true
+      percentiles[order.service.keyset]: 0.5, 0.95, 0.99
+      percentiles-histogram[order.service.keyset]: true
+      percentiles[order.service.deferred]: 0.5, 0.95, 0.99
+      percentiles-histogram[order.service.deferred]: true
 
   # OpenTelemetry Tracing Export
   tracing:
