@@ -13,9 +13,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class OrderLoadTest {
 
-    private static final String TARGET_URL = "http://localhost:8080/api/orders?strategy=entitygraph&limit=50";
-    private static final int CONCURRENCY = 25;
-    private static final Duration DURATION = Duration.ofSeconds(30);
+    private static final String TARGET_URL = "http://localhost:8080/api/orders?strategy=joinfetch&limit=50";
+    private static final int CONCURRENCY = 50;
+    private static final Duration DURATION = Duration.ofSeconds(15);
 
     public static void main(String[] args) throws InterruptedException {
         System.out.println("=========================================================================");

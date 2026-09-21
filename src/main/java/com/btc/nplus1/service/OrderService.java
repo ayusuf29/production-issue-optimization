@@ -7,6 +7,7 @@ import com.btc.nplus1.dto.OrderSummaryResponse;
 import com.btc.nplus1.repository.OrderRepository;
 import io.micrometer.observation.annotation.Observed;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,16 +25,21 @@ public class OrderService {
     @Observed(name = "order.service.getOrders", contextualName = "OrderService#getOrders")
     @Transactional(readOnly = true)
     public List<CustomerOrderResponse> getOrders(String strategy, int limit) {
+        Pageable pageable = PageRequest.of(0, limit);
         List<CustomerOrder> orders;
 
         switch (strategy.toLowerCase()) {
-            case "joinfetch" ->
-                    orders = orderRepository.findRecentOrdersWithJoinFetch();
-            case "entitygraph" ->
-                    orders = orderRepository.findRecentOrdersWithEntityGraph();
+            case "joinfetch" -> {
+                List<Long> ids = orderRepository.findRecentOrderIds(pageable);
+                orders = ids.isEmpty() ? List.of() : orderRepository.findOrdersWithJoinFetchByIds(ids);
+            }
+            case "entitygraph" -> {
+                List<Long> ids = orderRepository.findRecentOrderIds(pageable);
+                orders = ids.isEmpty() ? List.of() : orderRepository.findOrdersWithEntityGraphByIds(ids);
+            }
             default ->
                 // Default triggers N+1 via standard lazy collection access
-                    orders = orderRepository.findRecentOrders(PageRequest.of(0, limit));
+                orders = orderRepository.findRecentOrders(pageable);
         }
 
         // Mapping to DTO: accessing o.getItems() is what triggers the child queries in N+1!

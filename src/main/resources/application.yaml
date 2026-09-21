@@ -38,7 +38,7 @@ spring:
     hibernate:
       ddl-auto: update # Automatically creates tables, columns, indexes, and FKs
     open-in-view: false # Production standard: avoid holding connections open during view rendering
-    show-sql: true # Prints raw SQL statements
+    show-sql: false # Prints raw SQL statements
     properties:
       hibernate:
         format_sql: false
