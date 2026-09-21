@@ -1,10 +1,11 @@
-# Spring Boot N+1 Query Problem & Pagination Observability Demo
+# Spring Boot Performance & Observability Masterclass
 
-This project demonstrates two core database performance challenges and architectural optimizations in Spring Boot applications:
+This project demonstrates core backend performance challenges, architectural mitigations, and deep production observability in Spring Boot applications across three episodes:
 1. **Episode 1 — The N+1 Query Problem**: Solving ORM lazy-loading cascades using **JOIN FETCH** and **@EntityGraph**.
 2. **Episode 2 — Pagination at Scale**: Comparing **SQL Offset**, **Keyset (Cursor-based)**, and **Deferred Join** pagination strategies under deep-page scanning and connection pool stress.
+3. **Episode 3 — Caching: Stampede, Penetration & Invalidation Cascades**: Preventing database pool exhaustion using **Distributed Mutex (Redisson RLock)**, **Double-Checked Locking**, **Empty Sentinels**, and **Randomized TTL Jitter**.
 
-The application includes an end-to-end **Observability Stack** (Metrics, Distributed Tracing, and Dashboards) built with **Prometheus**, **OpenTelemetry Collector**, **Grafana Tempo**, and **Grafana**.
+The application includes an end-to-end **Observability Stack** (Metrics, Distributed Tracing, and Dashboards) built with **PostgreSQL 16**, **Redis 7**, **Prometheus**, **OpenTelemetry Collector**, **Grafana Tempo**, and **Grafana**.
 
 ---
 
@@ -45,11 +46,16 @@ The application includes an end-to-end **Observability Stack** (Metrics, Distrib
                                         │  │ Prometheus (Metrics) │  │ Tempo (Traces)         │  │  │
                                         │  └──────────────────────┘  └────────────────────────┘  │  │
                                         └────────────────────────────────────────────────────────┘  │
-                                                                                                    │
-                                                    ┌────────────────────────┐                      │
-                                                    │   PostgreSQL 16 DB     ├──────────────────────┘
-                                                    │   (Port 5432)          │
-                                                    └────────────────────────┘
+                                              ▲                                                     │
+                     [ Scrapes Redis Stats ]  │         ┌────────────────────────┐                  │
+                     redis-exporter:9121 ─────┘         │    PostgreSQL 16 DB    ├──────────────────┘
+                                                        │    (Port 5432)         │
+                                                        └────────────────────────┘
+                                                                    ▲
+                                                        ┌───────────┴────────────┐
+                                                        │      Redis 7 (L2)      │
+                                                        │      (Port 6379)       │
+                                                        └────────────────────────┘
 ```
 
 ---
@@ -71,7 +77,7 @@ Run Docker Compose from the project root directory:
 docker compose up -d
 ```
 
-Verify all 5 services are running:
+Verify all services are running:
 
 ```bash
 docker compose ps
@@ -80,9 +86,11 @@ docker compose ps
 | Container | Service | Port | Description |
 | :--- | :--- | :--- | :--- |
 | `btc-postgres` | PostgreSQL 16 | `5432` | Database (`ecommerce`, user: `postgres`, pass: `password`) |
-| `btc-prometheus` | Prometheus | `9090` | Time-series metrics engine (scrapes Spring Boot + OTel Collector) |
+| `btc-redis` | Redis 7 | `6379` | In-memory key-value store and distributed lock provider |
+| `btc-redis-exporter` | Redis Exporter | `9121` | Exports Redis memory, ops, and CPU metrics to Prometheus |
+| `btc-prometheus` | Prometheus | `9090` | Time-series metrics engine (scrapes Spring Boot, OTel & Redis) |
 | `btc-tempo` | Grafana Tempo | `3200` | Distributed tracing backend |
-| `btc-otel-collector` | OpenTelemetry Collector | `4317` (gRPC), `4318` (HTTP), `8889` (Prometheus exporter) | Receives traces & collects PostgreSQL engine metrics |
+| `btc-otel-collector` | OpenTelemetry Collector | `4317` (gRPC), `4318` (HTTP), `8889` (Prometheus) | Receives traces & collects PostgreSQL engine metrics |
 | `btc-grafana` | Grafana UI | `3000` | Pre-provisioned dashboards with Prometheus & Tempo datasources |
 
 ---
@@ -100,177 +108,186 @@ Start the app using Maven:
 ```
 
 The application will start on port `8080`.  
-On initial boot, [DataSeederConfig.java](src/main/java/com/btc/nplus1/seed/DataSeederConfig.java) and [DataSeederOrderItem.java](src/main/java/com/btc/nplus1/seed/DataSeederOrderItem.java) automatically populate the database with users and thousands of orders.
+On initial boot:
+- [DataSeederConfig.java](file:///C:/practice/nplus1/src/main/java/com/btc/nplus1/seed/DataSeederConfig.java) seeds users and customer orders.
+- [CatalogDataSeeder.java](file:///C:/practice/nplus1/src/main/java/com/btc/nplus1/seed/CatalogDataSeeder.java) seeds catalog products, categories, and specifications (`hot-deal`, `prod-1001`).
 
 ---
 
-## 🧪 Episode 1: Testing N+1 Query Problem & Solutions
+## 🛡️ Episode 3: Caching — Stampede, Penetration & Invalidation Cascades
 
-### 1. Trigger the N+1 Query Problem (Slow)
-Fetches 50 orders using standard lazy loading. Accessing `order.getItems()` triggers **50 additional child SQL queries**:
+### The 3 Enterprise Caching Vulnerabilities
 
-```bash
-curl "http://localhost:8080/api/orders?strategy=nplus1&limit=50"
-```
-
-### 2. Solution 1: JPQL JOIN FETCH (Fast)
-Fetches orders and items in **a single SQL query** using `LEFT JOIN FETCH`:
-
-```bash
-curl "http://localhost:8080/api/orders?strategy=joinfetch&limit=50"
-```
-
-### 3. Solution 2: Declarative @EntityGraph (Fast)
-Fetches orders and items in **a single SQL query** using Spring Data JPA `@EntityGraph`:
-
-```bash
-curl "http://localhost:8080/api/orders?strategy=entitygraph&limit=50"
-```
-
-### 4. Lightweight Summary Query
-Reads only parent order fields without loading child items:
-
-```bash
-curl "http://localhost:8080/api/orders/summary"
-```
+| Vulnerability | Root Cause | Failure Mode | Mitigation Solution |
+| :--- | :--- | :--- | :--- |
+| **Cache Stampede (Dogpiling)** | A hot key expires or is purged under high traffic; multiple threads get `null` simultaneously. | Concurrently fire 50+ identical expensive SQL queries; HikariCP pool exhausts immediately; DB CPU 100%. | **Distributed Mutex (`RLock`)** with **Double-Checked Locking**. Exactly 1 thread queries DB; others wait and read cache. |
+| **Cache Penetration** | Clients repeatedly query non-existent keys (e.g. `/product/invalid-999`). | `null` is returned from DB and **never cached**, so every probe hits PostgreSQL unmitigated. | **Empty Sentinel Object** cached in Redis with a short TTL (e.g. 60s) to serve fast 404s without hitting DB. |
+| **Invalidation Cascades** | Thousands of keys written in a batch with identical fixed TTL (e.g. 60m). | All keys expire at the exact same second, causing a thundering herd query wave. | **Randomized TTL Jitter** ($T_{base} + \text{rand}(\Delta)$) to flatten expiration boundaries. |
 
 ---
 
-## ⚡ Episode 2: Offset vs Keyset vs Deferred Join Pagination
+### 1. Triggering the Cache Stampede (Vulnerable Naive Route)
 
-When datasets grow to millions of rows, pagination performance diverges drastically depending on the strategy:
-
-| Strategy | Endpoint | Time Complexity | Index Scan vs Heap Scan | Connection Pool Impact |
-| :--- | :--- | :--- | :--- | :--- |
-| **Standard Offset** | `/api/orders/offset` | $O(N)$ scanning | Scans & discards $N$ rows from heap + runs expensive `COUNT(*)` | High pool starvation on deep pages |
-| **Keyset (Cursor)** | `/api/orders/keyset` | $O(1)$ constant | Direct B-Tree seek `(created_at, id) < (cursor_date, cursor_id)` | Zero starvation, flat latency |
-| **Deferred Join** | `/api/orders/deferred` | $O(N)$ index-only | Skips heap lookup in subquery using covering index, joins only target 20 rows | Moderate latency, low buffer churn |
-
-### 1. Offset Pagination
-Standard SQL `LIMIT ? OFFSET ?` paired with Spring Data `Pageable`:
+The naive endpoint `/api/catalog/hot-deal/naive` checks Redis and on miss fires a heavy multi-table join against PostgreSQL without synchronization.
 
 ```bash
-# First page
-curl "http://localhost:8080/api/orders/offset?page=0&size=20"
+# 1. Warm the cache key
+curl -i http://localhost:8080/api/catalog/hot-deal/naive
 
-# Deep page (High latency, high buffer churn)
-curl "http://localhost:8080/api/orders/offset?page=500&size=20"
+# 2. Simulate key expiry or admin purge
+docker exec -it btc-redis redis-cli DEL "catalog::hot-deal"
+# (or trigger eviction via HTTP: curl -X POST "http://localhost:8080/api/catalog/evict?key=catalog::hot-deal")
+
+# 3. Fire 50 concurrent virtual threads
+# Using the built-in Java virtual thread load test:
+./mvnw.cmd test-compile exec:java -Dexec.mainClass="com.btc.nplus1.CacheStampedeLoadTest" -Dexec.args="stampede"
+
+# Or using k6:
+k6 run script/cache-stampede.js
 ```
 
-* **Why it degrades**: PostgreSQL must read all previous rows from disk/buffer into memory and discard them. The accompanying `count(*)` query scans the entire relation.
+#### What Happens in Grafana & Logs:
+* `hikaricp_connections_pending` jumps immediately to **40+**.
+* 50 identical `SELECT` statements flood PostgreSQL.
+* Requests queue past HikariCP's `connection-timeout: 1000ms`, throwing connection starvation errors.
+* Tail latency ($p99$) explodes over **1,500ms**.
 
-### 2. Keyset (Cursor-based) Pagination
-Seek-based pagination using a composite cursor `(created_at, id)` encoded in Base64:
+---
+
+### 2. Testing the Solution: Distributed Mutex + Double-Checked Locking
+
+The optimized endpoint `/api/catalog/hot-deal/mutex` guards cache rebuilding using Redisson distributed lock `RLock` and double-checked locking:
 
 ```bash
-# 1. Fetch first page
-curl "http://localhost:8080/api/orders/keyset?size=20"
-
-# Response returns:
-# {
-#   "content": [...],
-#   "nextCursor": "MTcwOTY0MTIxMDAwMDoxMDI0",
-#   "hasMore": true
-# }
-
-# 2. Fetch next page using the cursor
-curl "http://localhost:8080/api/orders/keyset?cursor=MTcwOTY0MTIxMDAwMDoxMDI0&size=20"
+# Invalidate key and fire 50 concurrent virtual threads targeting the mutex route:
+curl -X POST "http://localhost:8080/api/catalog/evict?key=catalog::hot-deal"
+./mvnw.cmd test-compile exec:java -Dexec.mainClass="com.btc.nplus1.CacheStampedeLoadTest" -Dexec.args="stampede"
 ```
 
-* **Why it is fast**: Executes `WHERE (o.created_at, o.id) < (:createdAt, :id) ORDER BY o.created_at DESC, o.id DESC LIMIT 21`. PostgreSQL performs an index seek directly to the target row without scanning or discarding previous records.
+#### Code Mechanics ([CatalogService.java](file:///C:/practice/nplus1/src/main/java/com/btc/nplus1/service/CatalogService.java)):
+```java
+public ProductCatalogDTO getHotDealWithMutex() {
+    // 1. Initial fast-path cache read
+    ProductCatalogDTO data = redisTemplate.opsForValue().get(HOT_DEAL_KEY);
+    if (data != null) return data;
 
-### 3. Deferred Join Pagination
-Optimizes offset queries when random access to a specific page number is strictly required:
+    // 2. Acquire distributed lock for this specific key
+    RLock lock = redissonClient.getLock(LOCK_HOT_DEAL_KEY);
+    try {
+        if (lock.tryLock(2, 5, TimeUnit.SECONDS)) {
+            try {
+                // 3. Double-Checked Locking: Did another thread populate cache while we waited?
+                data = redisTemplate.opsForValue().get(HOT_DEAL_KEY);
+                if (data != null) return data;
+
+                // 4. Exactly one thread executes the heavy query
+                data = loadFromDatabase("hot-deal");
+
+                // 5. Write back with randomized TTL jitter (300s + rand(0..60s))
+                Duration ttl = Duration.ofSeconds(300 + ThreadLocalRandom.current().nextInt(60));
+                redisTemplate.opsForValue().set(HOT_DEAL_KEY, data, ttl);
+                return data;
+            } finally {
+                if (lock.isHeldByCurrentThread()) lock.unlock();
+            }
+        } else {
+            // Fallback: brief yield and read cache
+            Thread.sleep(100);
+            return redisTemplate.opsForValue().get(HOT_DEAL_KEY);
+        }
+    } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        return loadFromDatabase("hot-deal");
+    }
+}
+```
+
+#### Verification Under the Microscope:
+* **PostgreSQL Statement Count**: **Exactly 1 SQL statement** is executed.
+* **HikariCP Pending Queue**: Stays at **0**.
+* **Latency ($p99$)**: Drops from $>1,500\text{ms}$ down to **$<20\text{ms}$**.
+
+---
+
+### 3. Testing Cache Penetration vs Empty Sentinels
+
+Querying non-existent products:
 
 ```bash
-curl "http://localhost:8080/api/orders/deferred?page=500&size=20"
+# Naive (Every request queries PostgreSQL):
+curl -i http://localhost:8080/api/catalog/product/fake-id-999/naive
+
+# Optimized (First request queries DB, caches sentinel, subsequent queries hit Redis):
+curl -i http://localhost:8080/api/catalog/product/fake-id-999/sentinel
+
+# Run benchmark with 50 concurrent virtual threads:
+./mvnw.cmd test-compile exec:java -Dexec.mainClass="com.btc.nplus1.CacheStampedeLoadTest" -Dexec.args="penetration"
 ```
 
-* **Why it is fast**: An inner subquery `SELECT id FROM customer_orders ORDER BY created_at DESC LIMIT 20 OFFSET 10000` scans only the narrow index. The outer query joins only the 20 matched IDs back to the main table.
+* **Naive**: 50/50 requests hit PostgreSQL.
+* **Optimized**: 1 DB miss $\rightarrow$ 49 sentinel hits (`cache_gets_total{result="sentinel"}`) served directly from Redis in 0.6ms.
 
 ---
 
 ## 📊 Grafana Dashboards
 
-Grafana is pre-configured to automatically load datasources and the Episode 2 pagination dashboard:
-
+Grafana is pre-configured with two dashboards under the **Break The Code** folder:
 * **URL**: `http://localhost:3000`
 * **Credentials**: `admin` / `admin`
-* **Dashboard Path**: **Dashboards** $\rightarrow$ **Break The Code** $\rightarrow$ **Break The Code — Episode 2: Offset vs Keyset Pagination**
 
-### Included Dashboard Panels:
+### 1. Episode 3 Dashboard: Cache Stampede, Penetration & Invalidation Cascades
+* **Dashboard File**: [`grafana-dashboard/grafana-caching.json`](file:///C:/practice/nplus1/grafana-dashboard/grafana-caching.json)
+* **Panels**:
+  1. **Cache Observability**: Hits (`cache_gets_total{result="hit"}`) vs Misses (`result="miss"`) vs Sentinel Protections (`result="sentinel"`).
+  2. **HikariCP**: Connection Pool Starvation & Pending Queue Contention (`hikaricp_connections_pending`).
+  3. **Application**: HTTP $p95$ and $p99$ Tail Latency by Route.
+  4. **Redisson**: Distributed Lock Acquisition Wait Time (`cache_lock_acquire_seconds`).
+  5. **Application**: Catalog Endpoints Throughput (req/sec).
+  6. **Service Layer**: `@Observed` Method Execution Latency ($p95$).
 
-1. **PostgreSQL: Read Amplification (Blocks Read per Live Row Fetched)**
-   * Compares total block hits and disk reads against rows fetched.
-   * Keyset pagination remains flat (~2–4 blocks/row), while deep offset climbs into thousands of blocks.
-2. **PostgreSQL: Buffer Cache Hit Ratio**
-   * Measures buffer pool hit efficiency (`sum(blks_hit) / (sum(blks_hit) + sum(blks_read)) * 100`).
-   * Heavy offset queries evict warm data from shared buffers, creating visible dips.
-3. **Application: HTTP p95 Tail Latency by Route**
-   * Real-time $p95$ tail latency comparison for `/api/orders/offset`, `/api/orders/keyset`, and `/api/orders/deferred`.
-4. **HikariCP: Pool Starvation (Active vs Pending Threads)**
-   * Visualizes pool exhaustion (`HikariPool-Orders`).
-   * Deep offset queries hold connections longer, causing pending thread spikes and connection timeouts.
-5. **Application: Throughput by Route (req/sec)**
-   * Tracks request throughput per endpoint under load.
-6. **Service Layer: @Observed Method Latency (p95)**
-   * Internal execution time measured by Micrometer `@Observed` on `OrderService#getOrdersOffset`, `getOrdersKeyset`, and `getOrdersDeferred`.
+### 2. Episode 2 Dashboard: Offset vs Keyset Pagination
+* **Dashboard File**: [`grafana-dashboard/grafana-pagination.json`](file:///C:/practice/nplus1/grafana-dashboard/grafana-pagination.json)
+* Compares read amplification factor, buffer cache churn, and deep offset degradation.
 
 ---
 
-## 📜 Hibernate Logs & Session Metrics
+## 🔍 Distributed Traces in Grafana Tempo
 
-### 1. Statement Count Summary
-Thanks to `hibernate.generate_statistics: true` in `application.yaml`, Hibernate logs session execution metrics:
-
-```text
-Session Metrics {
-    2841600 nanoseconds spent executing 51 JDBC statements;
-    124000 nanoseconds spent preparing 51 JDBC statements;
-    0 nanoseconds spent executing 0 JDBC batches;
-    ...
-}
-```
-
-### 2. Distributed Tracing Correlation IDs
-Logs include the `[applicationName,traceId,spanId]` tag for correlation:
-
-```text
-INFO [nplus1,4bf92f3577b34da6a3ce929d0e0e4736,00f067aa0ba902b7] c.b.nplus1.controller.OrderController : Received getOrdersOffset request: page=0, size=20
-```
-
----
-
-## 🔍 How to Observe Traces in Grafana Tempo
-
-1. In Grafana (`http://localhost:3000`), click **Explore** (compass icon).
-2. Select **Tempo** from the datasource dropdown.
-3. Switch query mode to **TraceQL** and run:
+1. Open Grafana (`http://localhost:3000`) $\rightarrow$ **Explore** $\rightarrow$ select **Tempo**.
+2. Run TraceQL query:
    ```traceql
    { resource.service.name = "nplus1" }
    ```
-4. Click on any Trace to view the waterfall spans:
-   * Controller span: `http get /api/orders/keyset`
-   * Service span: `OrderService#getOrdersKeyset`
-   * SQL JDBC query spans.
+3. Compare the waterfall spans:
+   * **Stampede Trace (Naive)**: Every concurrent trace contains an active JDBC span querying PostgreSQL.
+   * **Stampede Trace (Mutex)**:
+     - **Winning Thread**: Shows span `lock:tryLock` $\rightarrow$ DB Query $\rightarrow$ Redis `SET`.
+     - **Waiting Threads**: Shows span `lock:tryLock` wait $\rightarrow$ Redis `GET` cache hit (0.4ms) with **no database span**.
 
 ---
 
-## 🛠️ Useful Docker Commands
+## 🧪 Episode 1 & 2 Reference Endpoints
 
+### Episode 1: N+1 Query Problem
 ```bash
-# Restart OpenTelemetry Collector with updated metrics config
-docker compose restart otel-collector
+# Vulnerable N+1 (50 extra queries)
+curl "http://localhost:8080/api/orders?strategy=nplus1&limit=50"
 
-# Restart Grafana to reload provisioned dashboards
-docker compose restart grafana
+# Join Fetch solution (1 query)
+curl "http://localhost:8080/api/orders?strategy=joinfetch&limit=50"
 
-# View live OpenTelemetry Collector logs
-docker logs -f btc-otel-collector
+# EntityGraph solution (1 query)
+curl "http://localhost:8080/api/orders?strategy=entitygraph&limit=50"
+```
 
-# Stop all containers
-docker compose down
+### Episode 2: Deep Pagination Strategies
+```bash
+# Deep Offset (Scans and discards 10,000 rows)
+curl "http://localhost:8080/api/orders/offset?page=500&size=20"
 
-# Stop all containers and wipe volume data (resets database)
-docker compose down -v
+# Keyset Pagination (Direct index seek (created_at, id) < (cursor_date, cursor_id))
+curl "http://localhost:8080/api/orders/keyset?size=20"
+
+# Deferred Join (Narrow index scan with delayed join)
+curl "http://localhost:8080/api/orders/deferred?page=500&size=20"
 ```

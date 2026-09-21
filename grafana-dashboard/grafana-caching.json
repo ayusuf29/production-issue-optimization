@@ -1,0 +1,977 @@
+{
+  "annotations": [
+    {
+      "kind": "AnnotationQuery",
+      "spec": {
+        "builtIn": true,
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "query": {
+          "datasource": {
+            "name": "-- Grafana --"
+          },
+          "group": "grafana",
+          "kind": "DataQuery",
+          "spec": {},
+          "version": "v0"
+        }
+      }
+    }
+  ],
+  "cursorSync": "Crosshair",
+  "editable": true,
+  "elements": {
+    "panel-1": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "prometheus"
+                    },
+                    "group": "prometheus",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorMode": "code",
+                      "expr": "sum(rate(cache_gets_total{result=\"hit\"}[15s])) or sum(rate(cache_gets_total{result=\"hit\"}[30s]))",
+                      "legendFormat": "Cache Hits (L2 Redis)",
+                      "range": true
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              },
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "prometheus"
+                    },
+                    "group": "prometheus",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorMode": "code",
+                      "expr": "sum(rate(cache_gets_total{result=\"miss\"}[15s])) or sum(rate(cache_gets_total{result=\"miss\"}[30s]))",
+                      "legendFormat": "Cache Misses (DB Load Triggered)",
+                      "range": true
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "B"
+                }
+              },
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "prometheus"
+                    },
+                    "group": "prometheus",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorMode": "code",
+                      "expr": "sum(rate(cache_gets_total{result=\"sentinel\"}[15s])) or sum(rate(cache_gets_total{result=\"sentinel\"}[30s]))",
+                      "legendFormat": "Sentinel Hits (Penetration Blocked)",
+                      "range": true
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "C"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "Monitors cache hit vs miss rates and sentinel defenses. During a stampede, misses spike sharply; under mutex, misses drop to exactly 1.",
+        "id": 1,
+        "links": [],
+        "title": "Cache Observability: Hits vs Misses vs Sentinel Protections (req/sec)",
+        "vizConfig": {
+          "group": "timeseries",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisBorderShow": false,
+                  "axisCenteredZero": false,
+                  "axisColorMode": "text",
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "barWidthFactor": 0.6,
+                  "drawStyle": "line",
+                  "fillOpacity": 20,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": false
+                  },
+                  "insertNulls": false,
+                  "lineInterpolation": "smooth",
+                  "lineWidth": 2,
+                  "pointSize": 5,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "showPoints": "auto",
+                  "showValues": false,
+                  "spanNulls": false,
+                  "stacking": {
+                    "group": "A",
+                    "mode": "none"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    },
+                    {
+                      "color": "red",
+                      "value": 80
+                    }
+                  ]
+                },
+                "unit": "reqps"
+              },
+              "overrides": [
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "Cache Misses (DB Load Triggered)"
+                  },
+                  "properties": [
+                    {
+                      "id": "color",
+                      "value": {
+                        "fixedColor": "red",
+                        "mode": "fixed"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "Cache Hits (L2 Redis)"
+                  },
+                  "properties": [
+                    {
+                      "id": "color",
+                      "value": {
+                        "fixedColor": "green",
+                        "mode": "fixed"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "Sentinel Hits (Penetration Blocked)"
+                  },
+                  "properties": [
+                    {
+                      "id": "color",
+                      "value": {
+                        "fixedColor": "purple",
+                        "mode": "fixed"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "options": {
+              "legend": {
+                "calcs": [],
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "hideZeros": false,
+                "mode": "single",
+                "sort": "none"
+              }
+            }
+          },
+          "version": "13.2.1"
+        }
+      }
+    },
+    "panel-2": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "prometheus"
+                    },
+                    "group": "prometheus",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorMode": "code",
+                      "expr": "hikaricp_connections_pending{pool=~\"HikariPool-.*\"}",
+                      "legendFormat": "Pending Threads (Waiting for DB Connection)",
+                      "range": true
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              },
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "prometheus"
+                    },
+                    "group": "prometheus",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorMode": "code",
+                      "expr": "hikaricp_connections_active{pool=~\"HikariPool-.*\"}",
+                      "legendFormat": "Active Connections in Use",
+                      "range": true
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "B"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "Visualizes HikariCP connection pool starvation. In an unmitigated stampede, pending connections spike to 40+. With distributed locking, pending connections stay at 0.",
+        "id": 2,
+        "links": [],
+        "title": "HikariCP: Pool Starvation & Pending Queue Contention",
+        "vizConfig": {
+          "group": "timeseries",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisBorderShow": false,
+                  "axisCenteredZero": false,
+                  "axisColorMode": "text",
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "barWidthFactor": 0.6,
+                  "drawStyle": "line",
+                  "fillOpacity": 25,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": false
+                  },
+                  "insertNulls": false,
+                  "lineInterpolation": "smooth",
+                  "lineWidth": 2,
+                  "pointSize": 5,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "showPoints": "auto",
+                  "showValues": false,
+                  "spanNulls": false,
+                  "stacking": {
+                    "group": "A",
+                    "mode": "none"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    },
+                    {
+                      "color": "red",
+                      "value": 10
+                    }
+                  ]
+                },
+                "unit": "short"
+              },
+              "overrides": [
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "Pending Threads (Waiting for DB Connection)"
+                  },
+                  "properties": [
+                    {
+                      "id": "color",
+                      "value": {
+                        "fixedColor": "red",
+                        "mode": "fixed"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "options": {
+              "legend": {
+                "calcs": [],
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "hideZeros": false,
+                "mode": "single",
+                "sort": "none"
+              }
+            }
+          },
+          "version": "13.2.1"
+        }
+      }
+    },
+    "panel-3": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "prometheus"
+                    },
+                    "group": "prometheus",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorMode": "code",
+                      "expr": "histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{uri=~\"/api/catalog.*\"}[15s])) by (le, uri))",
+                      "legendFormat": "{{uri}} (p99)",
+                      "range": true
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              },
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "prometheus"
+                    },
+                    "group": "prometheus",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorMode": "code",
+                      "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{uri=~\"/api/catalog.*\"}[15s])) by (le, uri))",
+                      "legendFormat": "{{uri}} (p95)",
+                      "range": true
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "B"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "Compares tail latency under load. Naive routes explode past 1000ms and timeout; mutex-protected routes maintain flat sub-20ms latencies.",
+        "id": 3,
+        "links": [],
+        "title": "Application: HTTP p95 / p99 Tail Latency by Route",
+        "vizConfig": {
+          "group": "timeseries",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisBorderShow": false,
+                  "axisCenteredZero": false,
+                  "axisColorMode": "text",
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "barWidthFactor": 0.6,
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": false
+                  },
+                  "insertNulls": false,
+                  "lineInterpolation": "smooth",
+                  "lineWidth": 2,
+                  "pointSize": 5,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "showPoints": "auto",
+                  "showValues": false,
+                  "spanNulls": false,
+                  "stacking": {
+                    "group": "A",
+                    "mode": "none"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                },
+                "unit": "s"
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "calcs": [],
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "hideZeros": false,
+                "mode": "single",
+                "sort": "none"
+              }
+            }
+          },
+          "version": "13.2.1"
+        }
+      }
+    },
+    "panel-4": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "prometheus"
+                    },
+                    "group": "prometheus",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorMode": "code",
+                      "expr": "rate(cache_lock_acquire_seconds_sum[15s]) / clamp_min(rate(cache_lock_acquire_seconds_count[15s]), 0.001)",
+                      "legendFormat": "Avg Lock Wait Duration (seconds)",
+                      "range": true
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "Duration threads spent waiting to acquire Redisson RLock before double-checked cache read.",
+        "id": 4,
+        "links": [],
+        "title": "Redisson: Distributed Lock Acquisition Wait Time",
+        "vizConfig": {
+          "group": "timeseries",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisBorderShow": false,
+                  "axisCenteredZero": false,
+                  "axisColorMode": "text",
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "barWidthFactor": 0.6,
+                  "drawStyle": "line",
+                  "fillOpacity": 15,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": false
+                  },
+                  "insertNulls": false,
+                  "lineInterpolation": "smooth",
+                  "lineWidth": 2,
+                  "pointSize": 5,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "showPoints": "auto",
+                  "showValues": false,
+                  "spanNulls": false,
+                  "stacking": {
+                    "group": "A",
+                    "mode": "none"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 0.5
+                    },
+                    {
+                      "color": "red",
+                      "value": 2
+                    }
+                  ]
+                },
+                "unit": "s"
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "calcs": [],
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "hideZeros": false,
+                "mode": "single",
+                "sort": "none"
+              }
+            }
+          },
+          "version": "13.2.1"
+        }
+      }
+    },
+    "panel-5": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "prometheus"
+                    },
+                    "group": "prometheus",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorMode": "code",
+                      "expr": "sum(rate(http_server_requests_seconds_count{uri=~\"/api/catalog.*\"}[15s])) by (uri)",
+                      "legendFormat": "{{uri}}",
+                      "range": true
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "Throughput rate (requests/sec) across naive vs mutex/sentinel catalog endpoints.",
+        "id": 5,
+        "links": [],
+        "title": "Application: Catalog Endpoints Throughput (req/sec)",
+        "vizConfig": {
+          "group": "timeseries",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisBorderShow": false,
+                  "axisCenteredZero": false,
+                  "axisColorMode": "text",
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "barWidthFactor": 0.6,
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": false
+                  },
+                  "insertNulls": false,
+                  "lineInterpolation": "smooth",
+                  "lineWidth": 2,
+                  "pointSize": 5,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "showPoints": "auto",
+                  "showValues": false,
+                  "spanNulls": false,
+                  "stacking": {
+                    "group": "A",
+                    "mode": "none"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    },
+                    {
+                      "color": "red",
+                      "value": 80
+                    }
+                  ]
+                },
+                "unit": "reqps"
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "calcs": [],
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "hideZeros": false,
+                "mode": "single",
+                "sort": "none"
+              }
+            }
+          },
+          "version": "13.2.1"
+        }
+      }
+    },
+    "panel-6": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "prometheus"
+                    },
+                    "group": "prometheus",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorMode": "code",
+                      "expr": "histogram_quantile(0.95, sum(rate({__name__=~\"catalog_service_.*_seconds_bucket\"}[15s])) by (le, __name__))",
+                      "legendFormat": "{{__name__}} (p95)",
+                      "range": true
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "Internal method execution duration tracked via Micrometer @Observed annotations.",
+        "id": 6,
+        "links": [],
+        "title": "Service Layer: @Observed Method Execution Latency (p95)",
+        "vizConfig": {
+          "group": "timeseries",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisBorderShow": false,
+                  "axisCenteredZero": false,
+                  "axisColorMode": "text",
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "barWidthFactor": 0.6,
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": false
+                  },
+                  "insertNulls": false,
+                  "lineInterpolation": "smooth",
+                  "lineWidth": 2,
+                  "pointSize": 5,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "showPoints": "auto",
+                  "showValues": false,
+                  "spanNulls": false,
+                  "stacking": {
+                    "group": "A",
+                    "mode": "none"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                },
+                "unit": "s"
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "calcs": [],
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "hideZeros": false,
+                "mode": "single",
+                "sort": "none"
+              }
+            }
+          },
+          "version": "13.2.1"
+        }
+      }
+    }
+  },
+  "layout": {
+    "kind": "GridLayout",
+    "spec": {
+      "items": [
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-1"
+            },
+            "height": 8,
+            "width": 12,
+            "x": 0,
+            "y": 0
+          }
+        },
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-2"
+            },
+            "height": 8,
+            "width": 12,
+            "x": 12,
+            "y": 0
+          }
+        },
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-3"
+            },
+            "height": 8,
+            "width": 12,
+            "x": 0,
+            "y": 8
+          }
+        },
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-4"
+            },
+            "height": 8,
+            "width": 12,
+            "x": 12,
+            "y": 8
+          }
+        },
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-5"
+            },
+            "height": 8,
+            "width": 12,
+            "x": 0,
+            "y": 16
+          }
+        },
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-6"
+            },
+            "height": 8,
+            "width": 12,
+            "x": 12,
+            "y": 16
+          }
+        }
+      ]
+    }
+  },
+  "links": [],
+  "liveNow": false,
+  "preload": false,
+  "tags": [
+    "break-the-code",
+    "redis",
+    "caching",
+    "stampede",
+    "penetration"
+  ],
+  "timeSettings": {
+    "autoRefresh": "",
+    "autoRefreshIntervals": [
+      "2s",
+      "5s",
+      "10s"
+    ],
+    "fiscalYearStartMonth": 0,
+    "from": "now-15m",
+    "hideTimepicker": false,
+    "timezone": "browser",
+    "to": "now"
+  },
+  "title": "Break The Code — Episode 3: Cache Stampede, Penetration & Invalidation Cascades",
+  "variables": []
+}

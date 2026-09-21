@@ -24,6 +24,30 @@ services:
       timeout: 3s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: btc-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --save "" --appendonly no
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: btc-redis-exporter
+    restart: unless-stopped
+    environment:
+      - REDIS_ADDR=redis://redis:6379
+    ports:
+      - "9121:9121"
+    depends_on:
+      - redis
+
   prometheus:
     image: prom/prometheus:latest
     container_name: btc-prometheus
@@ -37,6 +61,7 @@ services:
       - "host.docker.internal:host-gateway"
     depends_on:
       - otel-collector
+      - redis-exporter
 
   grafana:
     image: grafana/grafana:latest
