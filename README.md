@@ -1,11 +1,11 @@
-# Spring Boot Performance & Observability Masterclass
+# Spring Boot Distributed Caching: Stampede, Penetration & Observability
 
-This project demonstrates core backend performance challenges, architectural mitigations, and deep production observability in Spring Boot applications across three episodes:
-1. **Episode 1 — The N+1 Query Problem**: Solving ORM lazy-loading cascades using **JOIN FETCH** and **@EntityGraph**.
-2. **Episode 2 — Pagination at Scale**: Comparing **SQL Offset**, **Keyset (Cursor-based)**, and **Deferred Join** pagination strategies under deep-page scanning and connection pool stress.
-3. **Episode 3 — Caching: Stampede, Penetration & Invalidation Cascades**: Preventing database pool exhaustion using **Distributed Mutex (Redisson RLock)**, **Double-Checked Locking**, **Empty Sentinels**, and **Randomized TTL Jitter**.
+This repository demonstrates the three critical production caching vulnerabilities and their enterprise architectural solutions in Spring Boot:
+1. **Cache Stampede (Dogpiling / Thundering Herd)**: Solved via **Distributed Mutex (`RLock`)** with **Double-Checked Locking**.
+2. **Cache Penetration**: Solved via **Empty Sentinel Object Caching** with short TTL.
+3. **Invalidation Cascades**: Solved via **Randomized TTL Jitter** ($T_{\text{base}} + \text{rand}(\Delta)$).
 
-The application includes an end-to-end **Observability Stack** (Metrics, Distributed Tracing, and Dashboards) built with **PostgreSQL 16**, **Redis 7**, **Prometheus**, **OpenTelemetry Collector**, **Grafana Tempo**, and **Grafana**.
+The project includes an end-to-end **Observability Stack** (Metrics, Distributed Tracing, and Dashboards) built with **Redis 7**, **PostgreSQL 16**, **Prometheus**, **OpenTelemetry Collector**, **Grafana Tempo**, **Redis Exporter**, and **Grafana**.
 
 ---
 
@@ -19,6 +19,11 @@ The application includes an end-to-end **Observability Stack** (Metrics, Distrib
                                       │  │ Spring Boot Actuator   │ │ Micrometer Tracing   │  │
                                       │  │ (micrometer-prometheus)│ │ (bridge-otel + AOP)  │  │
                                       │  └────────────┬───────────┘ └──────────┬───────────┘  │
+                                      │               │                        │              │
+                                      │  ┌────────────┴───────────┐            │              │
+                                      │  │ Redisson RLock Client  │            │              │
+                                      │  │ & RedisTemplate (JSON) │            │              │
+                                      │  └────────────┬───────────┘            │              │
                                       └───────────────┼────────────────────────┼──────────────┘
                                                       │                        │
                         [ PULL / Scrape Every 2s ]    │                        │ [ PUSH OTLP HTTP ]
@@ -55,6 +60,7 @@ The application includes an end-to-end **Observability Stack** (Metrics, Distrib
                                                         ┌───────────┴────────────┐
                                                         │      Redis 7 (L2)      │
                                                         │      (Port 6379)       │
+                                                        │   Distributed Mutex    │
                                                         └────────────────────────┘
 ```
 
@@ -77,7 +83,7 @@ Run Docker Compose from the project root directory:
 docker compose up -d
 ```
 
-Verify all services are running:
+Verify all 7 containers are healthy and running:
 
 ```bash
 docker compose ps
@@ -85,12 +91,12 @@ docker compose ps
 
 | Container | Service | Port | Description |
 | :--- | :--- | :--- | :--- |
-| `btc-postgres` | PostgreSQL 16 | `5432` | Database (`ecommerce`, user: `postgres`, pass: `password`) |
-| `btc-redis` | Redis 7 | `6379` | In-memory key-value store and distributed lock provider |
-| `btc-redis-exporter` | Redis Exporter | `9121` | Exports Redis memory, ops, and CPU metrics to Prometheus |
+| `btc-postgres` | PostgreSQL 16 | `5432` | Primary database (`ecommerce`, user: `postgres`, pass: `password`) |
+| `btc-redis` | Redis 7 | `6379` | In-memory cache & Redisson distributed lock manager |
+| `btc-redis-exporter` | Redis Exporter | `9121` | Prometheus exporter for Redis operations, latency & memory |
 | `btc-prometheus` | Prometheus | `9090` | Time-series metrics engine (scrapes Spring Boot, OTel & Redis) |
-| `btc-tempo` | Grafana Tempo | `3200` | Distributed tracing backend |
-| `btc-otel-collector` | OpenTelemetry Collector | `4317` (gRPC), `4318` (HTTP), `8889` (Prometheus) | Receives traces & collects PostgreSQL engine metrics |
+| `btc-tempo` | Grafana Tempo | `3200` | Distributed tracing storage |
+| `btc-otel-collector` | OpenTelemetry Collector | `4317` (gRPC), `4318` (HTTP), `8889` (Prometheus) | Receives traces & collects engine telemetry |
 | `btc-grafana` | Grafana UI | `3000` | Pre-provisioned dashboards with Prometheus & Tempo datasources |
 
 ---
@@ -107,77 +113,76 @@ Start the app using Maven:
 ./mvnw spring-boot:run
 ```
 
-The application will start on port `8080`.  
-On initial boot:
-- [DataSeederConfig.java](file:///C:/practice/nplus1/src/main/java/com/btc/nplus1/seed/DataSeederConfig.java) seeds users and customer orders.
-- [CatalogDataSeeder.java](file:///C:/practice/nplus1/src/main/java/com/btc/nplus1/seed/CatalogDataSeeder.java) seeds catalog products, categories, and specifications (`hot-deal`, `prod-1001`).
+The application starts on port `8080`.  
+On startup, [CatalogDataSeeder.java](file:///C:/practice/nplus1/src/main/java/com/btc/nplus1/seed/CatalogDataSeeder.java) automatically initializes categories, products, and technical specifications (`hot-deal`, `prod-1001`).
 
 ---
 
-## 🛡️ Episode 3: Caching — Stampede, Penetration & Invalidation Cascades
+## 🎯 The Three Production Caching Pitfalls
 
-### The 3 Enterprise Caching Vulnerabilities
-
-| Vulnerability | Root Cause | Failure Mode | Mitigation Solution |
-| :--- | :--- | :--- | :--- |
-| **Cache Stampede (Dogpiling)** | A hot key expires or is purged under high traffic; multiple threads get `null` simultaneously. | Concurrently fire 50+ identical expensive SQL queries; HikariCP pool exhausts immediately; DB CPU 100%. | **Distributed Mutex (`RLock`)** with **Double-Checked Locking**. Exactly 1 thread queries DB; others wait and read cache. |
-| **Cache Penetration** | Clients repeatedly query non-existent keys (e.g. `/product/invalid-999`). | `null` is returned from DB and **never cached**, so every probe hits PostgreSQL unmitigated. | **Empty Sentinel Object** cached in Redis with a short TTL (e.g. 60s) to serve fast 404s without hitting DB. |
-| **Invalidation Cascades** | Thousands of keys written in a batch with identical fixed TTL (e.g. 60m). | All keys expire at the exact same second, causing a thundering herd query wave. | **Randomized TTL Jitter** ($T_{base} + \text{rand}(\Delta)$) to flatten expiration boundaries. |
+```
+1. Cache Stampede (Dogpiling)           2. Cache Penetration               3. Invalidation Cascade
+┌───────────────────────────────┐       ┌───────────────────────────┐      ┌───────────────────────────┐
+│ Hot key expires under load    │       │ Probing non-existent IDs  │      │ Mass keys expire together │
+│ 50 threads get null           │       │ DB returns null           │      │ Static TTL: all die at T0 │
+│ 50 threads query DB at once   │       │ Null is never cached      │      │ DB hit by a sudden wave   │
+│ Pool starvation & HTTP 500s   │       │ 100% queries hit DB       │      │ Latency cliff across app  │
+└───────────────┬───────────────┘       └─────────────┬─────────────┘      └─────────────┬─────────────┘
+                ▼                                     ▼                                  ▼
+      [ Distributed Mutex ]                 [ Empty Sentinel ]                     [ TTL Jitter ]
+       Redisson RLock + DCL                  Placeholder in Redis                 T_base + rand(delta)
+```
 
 ---
 
-### 1. Triggering the Cache Stampede (Vulnerable Naive Route)
+## 🔬 Deep-Dive & Step-by-Step Reproduction
 
-The naive endpoint `/api/catalog/hot-deal/naive` checks Redis and on miss fires a heavy multi-table join against PostgreSQL without synchronization.
+### 1. Cache Stampede (Dogpiling)
+
+#### The Problem
+When a high-traffic cache entry (e.g. Black Friday `hot-deal`) expires or is evicted, dozens or hundreds of concurrent threads observe a cache miss simultaneously. Each thread independently queries PostgreSQL with complex joins to rebuild the cache entry. Because HikariCP has a constrained pool (`maximum-pool-size: 10`, `connection-timeout: 1000ms`), the database connection pool is depleted instantly, triggering query queuing, connection acquisition timeouts, and HTTP 500/504 errors.
+
+#### Trigger the Stampede (Naive Implementation)
+The naive endpoint [`/api/catalog/hot-deal/naive`](file:///C:/practice/nplus1/src/main/java/com/btc/nplus1/controller/CatalogController.java) implements basic cache-aside without locking:
 
 ```bash
 # 1. Warm the cache key
 curl -i http://localhost:8080/api/catalog/hot-deal/naive
 
-# 2. Simulate key expiry or admin purge
-docker exec -it btc-redis redis-cli DEL "catalog::hot-deal"
-# (or trigger eviction via HTTP: curl -X POST "http://localhost:8080/api/catalog/evict?key=catalog::hot-deal")
+# 2. Simulate key expiry or purge
+curl -X POST "http://localhost:8080/api/catalog/evict?key=catalog::hot-deal"
+# Or using Redis CLI: docker exec -it btc-redis redis-cli DEL "catalog::hot-deal"
 
-# 3. Fire 50 concurrent virtual threads
-# Using the built-in Java virtual thread load test:
+# 3. Fire 50 concurrent virtual threads at the exact same millisecond
 ./mvnw.cmd test-compile exec:java -Dexec.mainClass="com.btc.nplus1.CacheStampedeLoadTest" -Dexec.args="stampede"
-
-# Or using k6:
-k6 run script/cache-stampede.js
 ```
 
-#### What Happens in Grafana & Logs:
-* `hikaricp_connections_pending` jumps immediately to **40+**.
-* 50 identical `SELECT` statements flood PostgreSQL.
-* Requests queue past HikariCP's `connection-timeout: 1000ms`, throwing connection starvation errors.
-* Tail latency ($p99$) explodes over **1,500ms**.
+#### Observable Symptoms in Grafana:
+* **HikariCP Pending Queue**: `hikaricp_connections_pending` spikes to **40+**.
+* **Cache Misses**: 50 identical misses logged simultaneously.
+* **HTTP Latency**: $p99$ explodes past **1,500ms**, with connection timeout errors.
 
 ---
 
-### 2. Testing the Solution: Distributed Mutex + Double-Checked Locking
+### 2. The Solution: Distributed Mutex (`RLock`) + Double-Checked Locking
 
-The optimized endpoint `/api/catalog/hot-deal/mutex` guards cache rebuilding using Redisson distributed lock `RLock` and double-checked locking:
+#### The Architectural Fix
+The optimized endpoint [`/api/catalog/hot-deal/mutex`](file:///C:/practice/nplus1/src/main/java/com/btc/nplus1/service/CatalogService.java) wraps cache regeneration in a distributed mutex using Redisson's `RLock` combined with **Double-Checked Locking**:
 
-```bash
-# Invalidate key and fire 50 concurrent virtual threads targeting the mutex route:
-curl -X POST "http://localhost:8080/api/catalog/evict?key=catalog::hot-deal"
-./mvnw.cmd test-compile exec:java -Dexec.mainClass="com.btc.nplus1.CacheStampedeLoadTest" -Dexec.args="stampede"
-```
-
-#### Code Mechanics ([CatalogService.java](file:///C:/practice/nplus1/src/main/java/com/btc/nplus1/service/CatalogService.java)):
 ```java
 public ProductCatalogDTO getHotDealWithMutex() {
     // 1. Initial fast-path cache read
-    ProductCatalogDTO data = redisTemplate.opsForValue().get(HOT_DEAL_KEY);
+    ProductCatalogDTO data = redisTemplate.opsForValue().get("catalog::hot-deal");
     if (data != null) return data;
 
     // 2. Acquire distributed lock for this specific key
-    RLock lock = redissonClient.getLock(LOCK_HOT_DEAL_KEY);
+    RLock lock = redissonClient.getLock("lock::catalog::hot-deal");
     try {
+        // Wait up to 2 seconds; lease lock for 5 seconds
         if (lock.tryLock(2, 5, TimeUnit.SECONDS)) {
             try {
-                // 3. Double-Checked Locking: Did another thread populate cache while we waited?
-                data = redisTemplate.opsForValue().get(HOT_DEAL_KEY);
+                // 3. Double-Checked Locking: Did another thread build it while we waited?
+                data = redisTemplate.opsForValue().get("catalog::hot-deal");
                 if (data != null) return data;
 
                 // 4. Exactly one thread executes the heavy query
@@ -185,15 +190,15 @@ public ProductCatalogDTO getHotDealWithMutex() {
 
                 // 5. Write back with randomized TTL jitter (300s + rand(0..60s))
                 Duration ttl = Duration.ofSeconds(300 + ThreadLocalRandom.current().nextInt(60));
-                redisTemplate.opsForValue().set(HOT_DEAL_KEY, data, ttl);
+                redisTemplate.opsForValue().set("catalog::hot-deal", data, ttl);
                 return data;
             } finally {
                 if (lock.isHeldByCurrentThread()) lock.unlock();
             }
         } else {
-            // Fallback: brief yield and read cache
+            // Fallback: brief yield and read cache populated by lock holder
             Thread.sleep(100);
-            return redisTemplate.opsForValue().get(HOT_DEAL_KEY);
+            return redisTemplate.opsForValue().get("catalog::hot-deal");
         }
     } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
@@ -202,92 +207,144 @@ public ProductCatalogDTO getHotDealWithMutex() {
 }
 ```
 
-#### Verification Under the Microscope:
-* **PostgreSQL Statement Count**: **Exactly 1 SQL statement** is executed.
-* **HikariCP Pending Queue**: Stays at **0**.
-* **Latency ($p99$)**: Drops from $>1,500\text{ms}$ down to **$<20\text{ms}$**.
+#### Verify the Fix Under Load:
+```bash
+# Invalidate key and fire 50 concurrent virtual threads targeting the mutex route:
+curl -X POST "http://localhost:8080/api/catalog/evict?key=catalog::hot-deal"
+./mvnw.cmd test-compile exec:java -Dexec.mainClass="com.btc.nplus1.CacheStampedeLoadTest" -Dexec.args="stampede"
+```
+
+#### Results Under the Microscope:
+* **PostgreSQL Statements**: **Exactly 1 query** is executed across all 50 concurrent requests.
+* **HikariCP Pending Connections**: Remains flat at **0**.
+* **Success Rate**: **100% (50/50 HTTP 200)**.
+* **Tail Latency ($p99$)**: Drops from $>1,500\text{ms}$ down to **$<20\text{ms}$**.
 
 ---
 
-### 3. Testing Cache Penetration vs Empty Sentinels
+### 3. Cache Penetration & Empty Sentinel Protection
 
-Querying non-existent products:
+#### The Problem
+When malicious probes or crawler bots query IDs that do not exist (e.g. `/api/catalog/product/invalid-999`), the database returns `null`. Standard cache-aside does not store `null` in Redis, causing **100% of subsequent requests** for non-existent items to hit PostgreSQL directly.
+
+#### The Solution: Empty Sentinel Object
+When the database returns `null`, write an empty sentinel DTO (`ProductCatalogDTO.emptySentinel()`) to Redis with a short TTL (e.g. 60s):
 
 ```bash
-# Naive (Every request queries PostgreSQL):
+# Naive (Every single request queries PostgreSQL):
 curl -i http://localhost:8080/api/catalog/product/fake-id-999/naive
 
-# Optimized (First request queries DB, caches sentinel, subsequent queries hit Redis):
+# Optimized with Sentinel (First query hits DB, subsequent queries hit Redis):
 curl -i http://localhost:8080/api/catalog/product/fake-id-999/sentinel
 
 # Run benchmark with 50 concurrent virtual threads:
 ./mvnw.cmd test-compile exec:java -Dexec.mainClass="com.btc.nplus1.CacheStampedeLoadTest" -Dexec.args="penetration"
 ```
 
-* **Naive**: 50/50 requests hit PostgreSQL.
-* **Optimized**: 1 DB miss $\rightarrow$ 49 sentinel hits (`cache_gets_total{result="sentinel"}`) served directly from Redis in 0.6ms.
+* **Naive Benchmark**: 50/50 requests execute database queries.
+* **Sentinel Benchmark**: 1 DB check $\rightarrow$ 49 sentinel cache hits (`cache_gets_total{result="sentinel"}`) returned from Redis in **0.4ms**.
 
 ---
 
-## 📊 Grafana Dashboards
+### 4. Invalidation Cascades & TTL Jitter
 
-Grafana is pre-configured with two dashboards under the **Break The Code** folder:
+#### The Problem
+Setting an identical TTL (e.g. 5 minutes) across batches of cache keys causes all entries to expire at the exact same instant, recreating a widespread database stampede at regular intervals.
+
+#### The Solution: Randomized TTL Jitter
+Add a bounded random jitter to the base TTL:
+$$\text{TTL} = T_{\text{base}} + \text{rand}(0, \Delta)$$
+
+```java
+Duration ttl = Duration.ofSeconds(300 + ThreadLocalRandom.current().nextInt(60));
+redisTemplate.opsForValue().set(key, value, ttl);
+```
+
+This distributes expiration events smoothly across a continuous time window, eliminating periodic query spikes.
+
+---
+
+## 📊 Grafana Observability Dashboard
+
+Grafana is pre-provisioned with the dedicated Caching dashboard:
 * **URL**: `http://localhost:3000`
 * **Credentials**: `admin` / `admin`
+* **Path**: **Dashboards** $\rightarrow$ **Break The Code** $\rightarrow$ **Break The Code — Episode 3: Cache Stampede, Penetration & Invalidation Cascades**
+* **Dashboard JSON**: [`grafana-dashboard/grafana-caching.json`](file:///C:/practice/nplus1/grafana-dashboard/grafana-caching.json)
 
-### 1. Episode 3 Dashboard: Cache Stampede, Penetration & Invalidation Cascades
-* **Dashboard File**: [`grafana-dashboard/grafana-caching.json`](file:///C:/practice/nplus1/grafana-dashboard/grafana-caching.json)
-* **Panels**:
-  1. **Cache Observability**: Hits (`cache_gets_total{result="hit"}`) vs Misses (`result="miss"`) vs Sentinel Protections (`result="sentinel"`).
-  2. **HikariCP**: Connection Pool Starvation & Pending Queue Contention (`hikaricp_connections_pending`).
-  3. **Application**: HTTP $p95$ and $p99$ Tail Latency by Route.
-  4. **Redisson**: Distributed Lock Acquisition Wait Time (`cache_lock_acquire_seconds`).
-  5. **Application**: Catalog Endpoints Throughput (req/sec).
-  6. **Service Layer**: `@Observed` Method Execution Latency ($p95$).
+### Dashboard Panels & PromQL Metrics
 
-### 2. Episode 2 Dashboard: Offset vs Keyset Pagination
-* **Dashboard File**: [`grafana-dashboard/grafana-pagination.json`](file:///C:/practice/nplus1/grafana-dashboard/grafana-pagination.json)
-* Compares read amplification factor, buffer cache churn, and deep offset degradation.
+| Panel | Metric / PromQL | Description |
+| :--- | :--- | :--- |
+| **1. Cache Traffic & Hits/Misses** | `sum(rate(cache_gets_total{result=~"hit\|miss\|sentinel"}[15s])) by (result)` | Visualizes cache hit ratio, stampede miss spikes, and sentinel interception rate. |
+| **2. HikariCP Pool Starvation** | `hikaricp_connections_pending` vs `hikaricp_connections_active` | Displays connection starvation (spikes to 40+ during stampede, stays at 0 under mutex). |
+| **3. HTTP Tail Latency (p95 / p99)** | `histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{uri=~"/api/catalog.*"}[15s])) by (le, uri))` | Compares latency profiles: naive routes explode over 1.5s while mutex routes remain flat. |
+| **4. Redisson Lock Wait Time** | `rate(cache_lock_acquire_seconds_sum[15s]) / clamp_min(rate(cache_lock_acquire_seconds_count[15s]), 0.001)` | Measures average time threads wait to acquire distributed lock before double-checked read. |
+| **5. Route Throughput** | `sum(rate(http_server_requests_seconds_count{uri=~"/api/catalog.*"}[15s])) by (uri)` | Real-time requests/second across naive vs mutex/sentinel endpoints. |
+| **6. Service Method Latency** | `histogram_quantile(0.95, sum(rate({__name__=~"catalog_service_.*_seconds_bucket"}[15s])) by (le, __name__))` | Fine-grained internal method execution time tracked via Micrometer `@Observed`. |
 
 ---
 
-## 🔍 Distributed Traces in Grafana Tempo
+## 🔍 Distributed Tracing with Grafana Tempo
 
 1. Open Grafana (`http://localhost:3000`) $\rightarrow$ **Explore** $\rightarrow$ select **Tempo**.
-2. Run TraceQL query:
+2. Run the TraceQL query:
    ```traceql
    { resource.service.name = "nplus1" }
    ```
-3. Compare the waterfall spans:
-   * **Stampede Trace (Naive)**: Every concurrent trace contains an active JDBC span querying PostgreSQL.
+3. Compare the waterfall spans during a cache cold start:
+   * **Stampede Trace (Naive)**: Every concurrent request shows an active JDBC child span executing `SELECT p.*, c.name FROM products...`.
    * **Stampede Trace (Mutex)**:
-     - **Winning Thread**: Shows span `lock:tryLock` $\rightarrow$ DB Query $\rightarrow$ Redis `SET`.
-     - **Waiting Threads**: Shows span `lock:tryLock` wait $\rightarrow$ Redis `GET` cache hit (0.4ms) with **no database span**.
+     - **Thread 1 (Lock Winner)**: `catalog.service.hotdeal.mutex` $\rightarrow$ acquired lock $\rightarrow$ executed 1 JDBC query $\rightarrow$ Redis `SET`.
+     - **Threads 2–50 (Waiters)**: Brief lock wait span $\rightarrow$ Redis `GET` cache hit ($<1\text{ms}$) with **zero JDBC database spans**.
 
 ---
 
-## 🧪 Episode 1 & 2 Reference Endpoints
+## 🧪 Load Testing Tools Included
 
-### Episode 1: N+1 Query Problem
+### 1. Java Virtual Thread Benchmark
+Dispatches 50 concurrent virtual threads at the exact same millisecond:
 ```bash
-# Vulnerable N+1 (50 extra queries)
-curl "http://localhost:8080/api/orders?strategy=nplus1&limit=50"
+# Run both Stampede and Penetration benchmarks:
+./mvnw.cmd test-compile exec:java -Dexec.mainClass="com.btc.nplus1.CacheStampedeLoadTest"
 
-# Join Fetch solution (1 query)
-curl "http://localhost:8080/api/orders?strategy=joinfetch&limit=50"
+# Run only Stampede benchmark:
+./mvnw.cmd test-compile exec:java -Dexec.mainClass="com.btc.nplus1.CacheStampedeLoadTest" -Dexec.args="stampede"
 
-# EntityGraph solution (1 query)
-curl "http://localhost:8080/api/orders?strategy=entitygraph&limit=50"
+# Run only Penetration benchmark:
+./mvnw.cmd test-compile exec:java -Dexec.mainClass="com.btc.nplus1.CacheStampedeLoadTest" -Dexec.args="penetration"
 ```
 
-### Episode 2: Deep Pagination Strategies
+### 2. k6 Load Testing Script
+Simulates cache invalidation and virtual user dogpiling:
 ```bash
-# Deep Offset (Scans and discards 10,000 rows)
-curl "http://localhost:8080/api/orders/offset?page=500&size=20"
+# Run against naive endpoint:
+k6 run -e TARGET=naive script/cache-stampede.js
 
-# Keyset Pagination (Direct index seek (created_at, id) < (cursor_date, cursor_id))
-curl "http://localhost:8080/api/orders/keyset?size=20"
+# Run against mutex endpoint:
+k6 run -e TARGET=mutex script/cache-stampede.js
+```
 
-# Deferred Join (Narrow index scan with delayed join)
-curl "http://localhost:8080/api/orders/deferred?page=500&size=20"
+---
+
+## 🛠️ Operational CLI Commands
+
+```bash
+# Evict hot deal cache key via Redis CLI
+docker exec -it btc-redis redis-cli DEL "catalog::hot-deal"
+
+# Check key TTL (demonstrating TTL jitter)
+docker exec -it btc-redis redis-cli TTL "catalog::hot-deal"
+
+# Inspect Redis keys and memory usage
+docker exec -it btc-redis redis-cli INFO stats
+
+# Restart Grafana to reload dashboard configurations
+docker compose restart grafana
+
+# Stop all containers
+docker compose down
+
+# Stop containers and wipe volumes (full clean slate)
+docker compose down -v
 ```

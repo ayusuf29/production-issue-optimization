@@ -36,7 +36,7 @@ spring:
       pool-name: HikariPool-Orders
       maximum-pool-size: 10
       minimum-idle: 10
-      connection-timeout: 1000 # 1 seconds fail-fast to show pool exhaustion quickly
+      connection-timeout: 250 # 250ms fail-fast timeout: 50 threads * 80ms query immediately triggers pool starvation!
       idle-timeout: 600000
       max-lifetime: 1800000
 
@@ -45,7 +45,7 @@ spring:
     hibernate:
       ddl-auto: update # Automatically creates tables, columns, indexes, and FKs
     open-in-view: false # Production standard: avoid holding connections open during view rendering
-    show-sql: true # Prints raw SQL statements
+    show-sql: false # Prints raw SQL statements
     properties:
       hibernate:
         format_sql: false

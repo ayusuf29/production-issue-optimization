@@ -1,13 +1,13 @@
 apiVersion: 1
 
 providers:
-  - name: 'Pagination Dashboards'
+  - name: 'Break The Code Dashboards'
     orgId: 1
     folder: 'Break The Code'
     folderUid: 'btc'
     type: file
     disableDeletion: false
-    updateIntervalSeconds: 10
+    updateIntervalSeconds: 5
     allowUiUpdates: true
     options:
       path: /var/lib/grafana/dashboards

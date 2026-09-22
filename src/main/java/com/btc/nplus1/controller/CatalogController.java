@@ -72,6 +72,25 @@ public class CatalogController {
     }
 
     /**
+     * Simulates Midnight ERP Catalog Sync Job (Topic 3: Invalidation Cascades & TTL Jitter).
+     */
+    @PostMapping("/sync-erp")
+    public ResponseEntity<Map<String, Object>> syncErpCatalog(
+            @RequestParam(name = "strategy", defaultValue = "naive") String strategy,
+            @RequestParam(name = "count", defaultValue = "20") int count) {
+        return ResponseEntity.ok(catalogService.syncErpCatalog(strategy, count));
+    }
+
+    /**
+     * Utility endpoint to inspect what is currently inside Redis for a specific key.
+     */
+    @GetMapping("/inspect")
+    public ResponseEntity<Map<String, Object>> inspectCache(
+            @RequestParam(name = "key", defaultValue = "catalog::hot-deal") String key) {
+        return ResponseEntity.ok(catalogService.inspectKey(key));
+    }
+
+    /**
      * Utility endpoint to invalidate cache key directly via HTTP.
      */
     @PostMapping("/evict")
