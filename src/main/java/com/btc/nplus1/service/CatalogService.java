@@ -161,7 +161,8 @@ public class CatalogService {
             }
         } else {
             // 6. Concurrency optimization: The other 49 threads do NOT queue serially for the lock.
-            // They wait for the rebuilder thread to finish, then read the cache concurrently!
+            // They wait for the rebuilder thread to finish, then read the cache concurrently! Retry with backoff mechanism in 30 times maximum count
+            // In short, please wait the winner thread until it populate the cache from db
             for (int i = 0; i < 30; i++) {
                 try {
                     Thread.sleep(15);
