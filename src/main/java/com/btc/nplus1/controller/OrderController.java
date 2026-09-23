@@ -6,6 +6,7 @@ import com.btc.nplus1.exception.InsufficientStockException;
 import com.btc.nplus1.repository.InventoryRepository;
 import com.btc.nplus1.repository.OrderRepository;
 import com.btc.nplus1.service.CheckoutService;
+import com.btc.nplus1.service.OrderBatchService;
 import com.btc.nplus1.service.OrderPlacementService;
 import com.btc.nplus1.service.OrderService;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -31,6 +32,7 @@ public class OrderController {
     private final OrderService orderService;
     private final CheckoutService checkoutService;
     private final OrderPlacementService orderPlacementService;
+    private final OrderBatchService orderBatchService;
     private final InventoryRepository inventoryRepository;
     private final OrderRepository orderRepository;
     private final MeterRegistry meterRegistry;
@@ -38,12 +40,14 @@ public class OrderController {
     public OrderController(OrderService orderService,
                            CheckoutService checkoutService,
                            OrderPlacementService orderPlacementService,
+                           OrderBatchService orderBatchService,
                            InventoryRepository inventoryRepository,
                            OrderRepository orderRepository,
                            MeterRegistry meterRegistry) {
         this.orderService = orderService;
         this.checkoutService = checkoutService;
         this.orderPlacementService = orderPlacementService;
+        this.orderBatchService = orderBatchService;
         this.inventoryRepository = inventoryRepository;
         this.orderRepository = orderRepository;
         this.meterRegistry = meterRegistry;
@@ -170,6 +174,43 @@ public class OrderController {
         OrderRequest req = (request != null) ? request : new OrderRequest();
         OrderResponse response = orderPlacementService.placeOrder(req);
         return ResponseEntity.ok(response);
+    }
+
+    // =========================================================================
+    // TOPIC 6: BATCH PROCESSING & JDBC MEMORY SINKS
+    // =========================================================================
+
+    /**
+     * Bulk order import supporting:
+     * - POST /api/orders/batch-import?strategy=saveall&count=50000 (Naive 1st-level cache sink)
+     * - POST /api/orders/batch-import?strategy=batch&count=50000&batchSize=100 (Chunked flush & clear)
+     */
+    @PostMapping("/batch-import")
+    public ResponseEntity<BatchImportResponse> batchImport(
+            @RequestParam(defaultValue = "batch") String strategy,
+            @RequestParam(defaultValue = "50000") int count,
+            @RequestParam(defaultValue = "100") int batchSize) {
+        log.info("Received batchImport request: strategy={}, count={}, batchSize={}", strategy, count, batchSize);
+
+        BatchImportResponse response;
+        if ("saveall".equalsIgnoreCase(strategy)) {
+            response = orderBatchService.importOrdersNaive(count);
+        } else {
+            response = orderBatchService.importOrdersBatch(count, batchSize);
+        }
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Purge all batch imported orders for test repeatability.
+     */
+    @DeleteMapping("/batch-cleanup")
+    public ResponseEntity<Map<String, Object>> batchCleanup() {
+        orderBatchService.cleanupBatchOrders();
+        return ResponseEntity.ok(Map.of(
+                "status", "SUCCESS",
+                "message", "Batch test orders cleaned up successfully"
+        ));
     }
 
     @ExceptionHandler(OptimisticLockingFailureException.class)

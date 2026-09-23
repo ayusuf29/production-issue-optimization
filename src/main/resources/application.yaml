@@ -26,9 +26,9 @@ spring:
       port: 6379
       timeout: 2000ms
 
-  # Database configuration pointing to Dockerized Postgres
+  # Database configuration pointing to Dockerized Postgres with batch insert rewrite enabled
   datasource:
-    url: jdbc:postgresql://localhost:5432/ecommerce
+    url: jdbc:postgresql://localhost:5432/ecommerce?reWriteBatchedInserts=true
     username: postgres
     password: password
     driver-class-name: org.postgresql.Driver
@@ -51,7 +51,7 @@ spring:
         format_sql: false
         generate_statistics: true # Essential for logging statement counts & metrics
         jdbc:
-          batch_size: 50
+          batch_size: 100
         order_inserts: true
         order_updates: true
 
@@ -101,6 +101,10 @@ management:
       percentiles-histogram[order.tx.createPending]: true
       percentiles[order.tx.finalize]: 0.5, 0.95, 0.99
       percentiles-histogram[order.tx.finalize]: true
+      percentiles[batch.import.naive]: 0.5, 0.95, 0.99
+      percentiles-histogram[batch.import.naive]: true
+      percentiles[batch.import.chunked]: 0.5, 0.95, 0.99
+      percentiles-histogram[batch.import.chunked]: true
 
   # OpenTelemetry Tracing Export
   tracing:

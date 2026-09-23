@@ -71,4 +71,9 @@ public interface OrderRepository extends JpaRepository<CustomerOrder, Long> {
     @Modifying
     @Query("DELETE FROM CustomerOrder o WHERE o.sku = :sku")
     void deleteBySku(@Param("sku") String sku);
+
+    // Batch Processing Purge Helper
+    @Modifying
+    @Query("DELETE FROM CustomerOrder o WHERE o.orderNumber LIKE 'BATCH-%'")
+    void deleteBatchOrders();
 }
