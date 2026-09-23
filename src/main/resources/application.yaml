@@ -34,9 +34,9 @@ spring:
     driver-class-name: org.postgresql.Driver
     hikari:
       pool-name: HikariPool-Orders
-      maximum-pool-size: 10
-      minimum-idle: 10
-      connection-timeout: 250 # 250ms fail-fast timeout: 50 threads * 80ms query immediately triggers pool starvation!
+      maximum-pool-size: 5
+      minimum-idle: 5
+      connection-timeout: 1000 # 1000ms fail-fast timeout: 5 concurrent 4s I/O checkouts pin the pool and immediately trigger pool starvation!
       idle-timeout: 600000
       max-lifetime: 1800000
 
@@ -91,6 +91,16 @@ management:
       percentiles-histogram[checkout.service.optimistic]: true
       percentiles[checkout.service.pessimistic]: 0.5, 0.95, 0.99
       percentiles-histogram[checkout.service.pessimistic]: true
+      percentiles[checkout.legacy]: 0.5, 0.95, 0.99
+      percentiles-histogram[checkout.legacy]: true
+      percentiles[checkout.decoupled]: 0.5, 0.95, 0.99
+      percentiles-histogram[checkout.decoupled]: true
+      percentiles[payment.gateway.process]: 0.5, 0.95, 0.99
+      percentiles-histogram[payment.gateway.process]: true
+      percentiles[order.tx.createPending]: 0.5, 0.95, 0.99
+      percentiles-histogram[order.tx.createPending]: true
+      percentiles[order.tx.finalize]: 0.5, 0.95, 0.99
+      percentiles-histogram[order.tx.finalize]: true
 
   # OpenTelemetry Tracing Export
   tracing:

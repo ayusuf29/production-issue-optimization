@@ -6,14 +6,17 @@ import com.btc.nplus1.exception.InsufficientStockException;
 import com.btc.nplus1.repository.InventoryRepository;
 import com.btc.nplus1.repository.OrderRepository;
 import com.btc.nplus1.service.CheckoutService;
+import com.btc.nplus1.service.OrderPlacementService;
 import com.btc.nplus1.service.OrderService;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
@@ -27,17 +30,20 @@ public class OrderController {
     private static final Logger log = LoggerFactory.getLogger(OrderController.class);
     private final OrderService orderService;
     private final CheckoutService checkoutService;
+    private final OrderPlacementService orderPlacementService;
     private final InventoryRepository inventoryRepository;
     private final OrderRepository orderRepository;
     private final MeterRegistry meterRegistry;
 
     public OrderController(OrderService orderService,
                            CheckoutService checkoutService,
+                           OrderPlacementService orderPlacementService,
                            InventoryRepository inventoryRepository,
                            OrderRepository orderRepository,
                            MeterRegistry meterRegistry) {
         this.orderService = orderService;
         this.checkoutService = checkoutService;
+        this.orderPlacementService = orderPlacementService;
         this.inventoryRepository = inventoryRepository;
         this.orderRepository = orderRepository;
         this.meterRegistry = meterRegistry;
@@ -140,6 +146,32 @@ public class OrderController {
         ));
     }
 
+    // =========================================================================
+    // TOPIC 5: TRANSACTION BOUNDARIES & THE LONG-RUNNING I/O TRAP
+    // =========================================================================
+
+    /**
+     * Trigger Endpoint: Naive checkout calling 4s external payment HTTP call INSIDE @Transactional.
+     * Database connection is held for the entire 4 seconds, starving the HikariCP pool.
+     */
+    @PostMapping("/checkout-legacy")
+    public ResponseEntity<OrderResponse> checkoutLegacy(@RequestBody(required = false) OrderRequest request) {
+        OrderRequest req = (request != null) ? request : new OrderRequest();
+        OrderResponse response = orderPlacementService.placeOrderLegacy(req);
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Step-by-Step Fix: Decoupled checkout separating DB transactions from network I/O.
+     * Database connection is held only during micro-transactions (<10ms).
+     */
+    @PostMapping("/checkout-decoupled")
+    public ResponseEntity<OrderResponse> checkoutDecoupled(@RequestBody(required = false) OrderRequest request) {
+        OrderRequest req = (request != null) ? request : new OrderRequest();
+        OrderResponse response = orderPlacementService.placeOrder(req);
+        return ResponseEntity.ok(response);
+    }
+
     @ExceptionHandler(OptimisticLockingFailureException.class)
     public ResponseEntity<Map<String, Object>> handleOptimisticLock(OptimisticLockingFailureException ex) {
         log.warn("Optimistic lock failure caught: {}", ex.getMessage());
@@ -158,6 +190,18 @@ public class OrderController {
                 "status", "CONFLICT",
                 "error", "InsufficientStockException",
                 "message", ex.getMessage()
+        ));
+    }
+
+    @ExceptionHandler({CannotCreateTransactionException.class, DataAccessResourceFailureException.class})
+    public ResponseEntity<Map<String, Object>> handlePoolStarvation(Exception ex) {
+        log.error("HikariCP Pool Starvation Caught: {}", ex.getMessage());
+        meterRegistry.counter("hikaricp.pool.starvation.errors").increment();
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of(
+                "status", "SERVICE_UNAVAILABLE",
+                "error", "HikariPool-Orders - Connection is not available, request timed out after 1000ms",
+                "exception", ex.getClass().getSimpleName(),
+                "message", ex.getMessage() != null ? ex.getMessage() : "Database connection pool exhausted due to long-running I/O held in @Transactional"
         ));
     }
 }

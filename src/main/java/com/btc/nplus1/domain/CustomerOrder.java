@@ -22,6 +22,9 @@ public class CustomerOrder {
     @Column(length = 64)
     private String sku;
 
+    @Column(length = 32)
+    private String status = "COMPLETED";
+
     @Column(nullable = false)
     private Instant createdAt;
 
@@ -46,6 +49,14 @@ public class CustomerOrder {
         this.user = user;
     }
 
+    public CustomerOrder(String orderNumber, String sku, String status, Instant createdAt, User user) {
+        this.orderNumber = orderNumber;
+        this.sku = sku;
+        this.status = status;
+        this.createdAt = createdAt;
+        this.user = user;
+    }
+
     public void addItem(OrderItem item) {
         items.add(item);
         item.setOrder(this);
@@ -57,6 +68,8 @@ public class CustomerOrder {
     public void setOrderNumber(String orderNumber) { this.orderNumber = orderNumber; }
     public String getSku() { return sku; }
     public void setSku(String sku) { this.sku = sku; }
+    public String getStatus() { return status; }
+    public void setStatus(String status) { this.status = status; }
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
     public User getUser() { return user; }
