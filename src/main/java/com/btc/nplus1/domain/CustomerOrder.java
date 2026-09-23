@@ -7,7 +7,8 @@ import java.util.List;
 
 @Entity
 @Table(name = "customer_orders", indexes = {
-        @Index(name = "idx_orders_created_id", columnList = "created_at DESC, id DESC")
+        @Index(name = "idx_orders_created_id", columnList = "created_at DESC, id DESC"),
+        @Index(name = "idx_orders_sku", columnList = "sku")
 })
 public class CustomerOrder {
 
@@ -17,6 +18,9 @@ public class CustomerOrder {
 
     @Column(nullable = false, unique = true, length = 64)
     private String orderNumber;
+
+    @Column(length = 64)
+    private String sku;
 
     @Column(nullable = false)
     private Instant createdAt;
@@ -35,6 +39,13 @@ public class CustomerOrder {
         this.createdAt = createdAt;
     }
 
+    public CustomerOrder(String orderNumber, String sku, Instant createdAt, User user) {
+        this.orderNumber = orderNumber;
+        this.sku = sku;
+        this.createdAt = createdAt;
+        this.user = user;
+    }
+
     public void addItem(OrderItem item) {
         items.add(item);
         item.setOrder(this);
@@ -43,7 +54,11 @@ public class CustomerOrder {
     // Getters and Setters
     public Long getId() { return id; }
     public String getOrderNumber() { return orderNumber; }
+    public void setOrderNumber(String orderNumber) { this.orderNumber = orderNumber; }
+    public String getSku() { return sku; }
+    public void setSku(String sku) { this.sku = sku; }
     public Instant getCreatedAt() { return createdAt; }
+    public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
     public User getUser() { return user; }
     public void setUser(User user) { this.user = user; }
     public List<OrderItem> getItems() { return items; }

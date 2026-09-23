@@ -1,11 +1,11 @@
 package com.btc.nplus1.repository;
 
-
 import com.btc.nplus1.domain.CustomerOrder;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -46,23 +46,29 @@ public interface OrderRepository extends JpaRepository<CustomerOrder, Long> {
             @Param("createdAt") Instant createdAt,
             @Param("id") Long id,
             Pageable pageable
-        );
+    );
 
-        // 4. Deferred Join: Keyset Seek using Index Subquery for Arbitrary Page Jumps
-        @Query(value = """
-        SELECT o.* 
-        FROM customer_orders o
-        INNER JOIN (
-            SELECT id 
-            FROM customer_orders 
-            ORDER BY created_at DESC, id DESC 
-            LIMIT :limit OFFSET :offset
-        ) target ON o.id = target.id
-        ORDER BY o.created_at DESC, o.id DESC
-        """, nativeQuery = true)
-        List<CustomerOrder> findByDeferredJoin(
-                @Param("offset") int offset,
-                @Param("limit") int limit
-        );
+    // 4. Deferred Join: Keyset Seek using Index Subquery for Arbitrary Page Jumps
+    @Query(value = """
+    SELECT o.* 
+    FROM customer_orders o
+    INNER JOIN (
+        SELECT id 
+        FROM customer_orders 
+        ORDER BY created_at DESC, id DESC 
+        LIMIT :limit OFFSET :offset
+    ) target ON o.id = target.id
+    ORDER BY o.created_at DESC, o.id DESC
+    """, nativeQuery = true)
+    List<CustomerOrder> findByDeferredJoin(
+            @Param("offset") int offset,
+            @Param("limit") int limit
+    );
 
+    // Concurrency Verification Queries
+    long countBySku(String sku);
+
+    @Modifying
+    @Query("DELETE FROM CustomerOrder o WHERE o.sku = :sku")
+    void deleteBySku(@Param("sku") String sku);
 }

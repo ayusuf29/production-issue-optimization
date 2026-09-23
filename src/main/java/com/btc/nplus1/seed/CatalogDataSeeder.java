@@ -1,9 +1,13 @@
 package com.btc.nplus1.seed;
 
 import com.btc.nplus1.domain.Category;
+import com.btc.nplus1.domain.InventoryItem;
 import com.btc.nplus1.domain.Product;
+import com.btc.nplus1.domain.User;
 import com.btc.nplus1.repository.CategoryRepository;
+import com.btc.nplus1.repository.InventoryRepository;
 import com.btc.nplus1.repository.ProductRepository;
+import com.btc.nplus1.repository.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.CommandLineRunner;
@@ -21,15 +25,27 @@ public class CatalogDataSeeder implements CommandLineRunner {
 
     private final CategoryRepository categoryRepository;
     private final ProductRepository productRepository;
+    private final InventoryRepository inventoryRepository;
+    private final UserRepository userRepository;
 
-    public CatalogDataSeeder(CategoryRepository categoryRepository, ProductRepository productRepository) {
+    public CatalogDataSeeder(CategoryRepository categoryRepository,
+                             ProductRepository productRepository,
+                             InventoryRepository inventoryRepository,
+                             UserRepository userRepository) {
         this.categoryRepository = categoryRepository;
         this.productRepository = productRepository;
+        this.inventoryRepository = inventoryRepository;
+        this.userRepository = userRepository;
     }
 
     @Override
     @Transactional
     public void run(String... args) {
+        // Ensure default user exists
+        if (userRepository.count() == 0) {
+            userRepository.save(new User("buyer@btc.com", "Flash Sale Buyer"));
+        }
+
         Category gaming = categoryRepository.findByCode("CAT-GAMING")
                 .orElseGet(() -> categoryRepository.save(new Category("High Performance Gaming", "CAT-GAMING")));
         Category electronics = categoryRepository.findByCode("CAT-ELEC")
@@ -90,6 +106,13 @@ public class CatalogDataSeeder implements CommandLineRunner {
             }
         }
 
-        log.info("Catalog seeding finished successfully! Seeded 'hot-deal', 'prod-1001', and batch products 'prod-1' through 'prod-30'.");
+        // Topic 4: Concurrency & Race Condition Item (GPU-4090 with initial stock = 1)
+        if (inventoryRepository.findBySku("GPU-4090").isEmpty()) {
+            InventoryItem gpuItem = new InventoryItem("GPU-4090", 1);
+            inventoryRepository.save(gpuItem);
+            log.info("Seeded inventory item 'GPU-4090' with initial stock = 1.");
+        }
+
+        log.info("Catalog & Inventory seeding finished successfully!");
     }
 }
