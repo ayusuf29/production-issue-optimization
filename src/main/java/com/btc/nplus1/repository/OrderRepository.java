@@ -15,15 +15,6 @@ public interface OrderRepository extends JpaRepository<CustomerOrder, Long> {
     @Query("SELECT o FROM CustomerOrder o ORDER BY o.createdAt DESC")
     List<CustomerOrder> findRecentOrders(Pageable pageable);
 
-    // 2. Solution 1: Explicit JPQL JOIN FETCH with DISTINCT (Unpaged - full scan)
-    @Query("SELECT DISTINCT o FROM CustomerOrder o LEFT JOIN FETCH o.items ORDER BY o.createdAt DESC")
-    List<CustomerOrder> findRecentOrdersWithJoinFetch();
-
-    // 3. Solution 2: Declarative @EntityGraph (Unpaged - full scan)
-    @EntityGraph(attributePaths = {"items"})
-    @Query("SELECT o FROM CustomerOrder o ORDER BY o.createdAt DESC")
-    List<CustomerOrder> findRecentOrdersWithEntityGraph();
-
     // Paged solutions (Two-phase fetch avoiding in-memory HHH000104 warning)
     @Query("SELECT o.id FROM CustomerOrder o ORDER BY o.createdAt DESC")
     List<Long> findRecentOrderIds(Pageable pageable);
