@@ -24,9 +24,9 @@ The application includes an end-to-end **Observability Stack** (Metrics, Distrib
                          GET /actuator/prometheus     │                        │ localhost:4318/v1/traces
                                                       ▼                        ▼
                                           ┌──────────────────────┐  ┌───────────────────────┐
-                                          │      Prometheus      │  │    OTel Collector     │◄──────┐
+                                          │      Prometheus      │  │    OTel Collector     │◄───────┐
                                           │     (Port 9090)      │  │      (Port 4318)      │       │ [ Scrapes DB Stats ]
-                                          └───────────┬──────────┘  └──────────┬────────────┘       │ pg_stat_database
+                                          └───────────┬──────────┘  └───────────┬───────────┘       │ pg_stat_database
                                                       │                        │                    │
                                                       │ [ Scrapes OTel ]       │ [ PUSH OTLP gRPC ] │
                                                       │ otel-collector:8889    │ tempo:4317         │
@@ -34,7 +34,7 @@ The application includes an end-to-end **Observability Stack** (Metrics, Distrib
                                                       │             ┌───────────────────────┐       │
                                                       │             │     Grafana Tempo     │       │
                                                       │             │   (Traces Storage)    │       │
-                                                      │             └──────────┬────────────┘       │
+                                                      │             └───────────┬───────────┘       │
                                                       │                        │                    │
                                                       ▼                        ▼                    │
                                         ┌────────────────────────────────────────────────────────┐  │
@@ -142,19 +142,19 @@ When datasets grow to millions of rows, pagination performance diverges drastica
 
 | Strategy | Endpoint | Time Complexity | Index Scan vs Heap Scan | Connection Pool Impact |
 | :--- | :--- | :--- | :--- | :--- |
-| **Standard Offset** | `/api/orders/offset` | $O(N)$ scanning | Scans & discards $N$ rows from heap + runs expensive `COUNT(*)` | High pool starvation on deep pages |
+| **Standard Offset** | `/api/orders/offset?strategy=offset` | $O(N)$ scanning | Scans & discards $N$ rows from heap + runs expensive `COUNT(*)` | High pool starvation on deep pages |
 | **Keyset (Cursor)** | `/api/orders/keyset` | $O(1)$ constant | Direct B-Tree seek `(created_at, id) < (cursor_date, cursor_id)` | Zero starvation, flat latency |
-| **Deferred Join** | `/api/orders/deferred` | $O(N)$ index-only | Skips heap lookup in subquery using covering index, joins only target 20 rows | Moderate latency, low buffer churn |
+| **Deferred Join** | `/api/orders/offset?strategy=deferred` | $O(N)$ index-only | Skips heap lookup in subquery using covering index, joins only target 20 rows | Moderate latency, low buffer churn |
 
-### 1. Offset Pagination
+### 1. Offset Pagination (Default Strategy)
 Standard SQL `LIMIT ? OFFSET ?` paired with Spring Data `Pageable`:
 
 ```bash
 # First page
-curl "http://localhost:8080/api/orders/offset?page=0&size=20"
+curl "http://localhost:8080/api/orders/offset?strategy=offset&page=0&size=20"
 
 # Deep page (High latency, high buffer churn)
-curl "http://localhost:8080/api/orders/offset?page=500&size=20"
+curl "http://localhost:8080/api/orders/offset?strategy=offset&page=500&size=20"
 ```
 
 * **Why it degrades**: PostgreSQL must read all previous rows from disk/buffer into memory and discard them. The accompanying `count(*)` query scans the entire relation.
@@ -179,14 +179,36 @@ curl "http://localhost:8080/api/orders/keyset?cursor=MTcwOTY0MTIxMDAwMDoxMDI0&si
 
 * **Why it is fast**: Executes `WHERE (o.created_at, o.id) < (:createdAt, :id) ORDER BY o.created_at DESC, o.id DESC LIMIT 21`. PostgreSQL performs an index seek directly to the target row without scanning or discarding previous records.
 
-### 3. Deferred Join Pagination
+### 3. Deferred Join Pagination (Unified `/offset` Endpoint)
 Optimizes offset queries when random access to a specific page number is strictly required:
 
 ```bash
-curl "http://localhost:8080/api/orders/deferred?page=500&size=20"
+curl "http://localhost:8080/api/orders/offset?strategy=deferred&page=500&size=20"
 ```
 
 * **Why it is fast**: An inner subquery `SELECT id FROM customer_orders ORDER BY created_at DESC LIMIT 20 OFFSET 10000` scans only the narrow index. The outer query joins only the 20 matched IDs back to the main table.
+
+---
+
+## 🚦 Automated Pagination Load Testing Harness
+
+The benchmark harness tests all three pagination strategies under concurrent virtual thread load:
+
+```bash
+# 1. Standard Offset (demonstrates deep offset degradation and buffer churn)
+./mvnw.cmd test-compile exec:java -Dexec.classpathScope=test -Dexec.mainClass="com.btc.nplus1.PaginationLoadTest" -Dexec.args="offset"
+
+# 2. Deferred Join (optimized index-only offset jumps)
+./mvnw.cmd test-compile exec:java -Dexec.classpathScope=test -Dexec.mainClass="com.btc.nplus1.PaginationLoadTest" -Dexec.args="deferred"
+
+# 3. Keyset Pagination (continuous cursor loop traversal)
+./mvnw.cmd test-compile exec:java -Dexec.classpathScope=test -Dexec.mainClass="com.btc.nplus1.PaginationLoadTest" -Dexec.args="keyset"
+```
+
+Custom tuning options:
+```bash
+-Dduration=30 -Dconcurrency=25 -Dlimit=20 -DbaseUrl=http://localhost:8080
+```
 
 ---
 
@@ -207,7 +229,7 @@ Grafana is pre-configured to automatically load datasources and the Episode 2 pa
    * Measures buffer pool hit efficiency (`sum(blks_hit) / (sum(blks_hit) + sum(blks_read)) * 100`).
    * Heavy offset queries evict warm data from shared buffers, creating visible dips.
 3. **Application: HTTP p95 Tail Latency by Route**
-   * Real-time $p95$ tail latency comparison for `/api/orders/offset`, `/api/orders/keyset`, and `/api/orders/deferred`.
+   * Real-time $p95$ tail latency comparison for `/api/orders/offset` vs `/api/orders/keyset`.
 4. **HikariCP: Pool Starvation (Active vs Pending Threads)**
    * Visualizes pool exhaustion (`HikariPool-Orders`).
    * Deep offset queries hold connections longer, causing pending thread spikes and connection timeouts.

@@ -96,8 +96,13 @@ public class OrderService {
     @Observed(name = "order.service.deferred", contextualName = "OrderService#getOrdersDeferred")
     @Transactional(readOnly = true)
     public List<OrderSummaryResponse> getOrdersDeferred(int page, int size) {
-        int offset = page * size;
-        return orderRepository.findByDeferredJoin(offset, size).stream()
+        return getOrdersDeferredByOffset(page * size, size);
+    }
+
+    @Observed(name = "order.service.deferred", contextualName = "OrderService#getOrdersDeferredByOffset")
+    @Transactional(readOnly = true)
+    public List<OrderSummaryResponse> getOrdersDeferredByOffset(int offset, int limit) {
+        return orderRepository.findByDeferredJoin(offset, limit).stream()
                 .map(this::toSummary)
                 .toList();
     }

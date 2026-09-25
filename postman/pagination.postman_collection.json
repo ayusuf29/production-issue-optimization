@@ -25,7 +25,7 @@
           }
         ],
         "url": {
-          "raw": "{{baseUrl}}/api/orders/offset?page=0&size=20",
+          "raw": "{{baseUrl}}/api/orders/offset?strategy=offset&page=0&size=20",
           "host": [
             "{{baseUrl}}"
           ],
@@ -35,6 +35,11 @@
             "offset"
           ],
           "query": [
+            {
+              "key": "strategy",
+              "value": "offset",
+              "description": "Pagination strategy: offset (default) or deferred"
+            },
             {
               "key": "page",
               "value": "0",
@@ -140,16 +145,21 @@
           }
         ],
         "url": {
-          "raw": "{{baseUrl}}/api/orders/deferred?page=0&size=20",
+          "raw": "{{baseUrl}}/api/orders/offset?strategy=deferred&page=0&size=20",
           "host": [
             "{{baseUrl}}"
           ],
           "path": [
             "api",
             "orders",
-            "deferred"
+            "offset"
           ],
           "query": [
+            {
+              "key": "strategy",
+              "value": "deferred",
+              "description": "Pagination strategy: offset or deferred"
+            },
             {
               "key": "page",
               "value": "0",
@@ -162,7 +172,7 @@
             }
           ]
         },
-        "description": "Retrieves orders using deferred join pagination optimization."
+        "description": "Retrieves orders using deferred join pagination optimization via the unified /offset endpoint."
       },
       "response": []
     }
