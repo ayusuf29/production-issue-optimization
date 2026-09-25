@@ -16,25 +16,69 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Demonstrates:
  * 1. Cache Stampede (The Thundering Herd on a single hot deal key):
  *    - 50 concurrent threads hit an expired key simultaneously.
- *    - Naive: 50 threads hit PostgreSQL at once -> HikariCP pool starvation (>250ms timeout) & HTTP 500!
- *    - Mutex: Only 1 thread queries PostgreSQL; 49 threads spin-poll Redis in parallel (~85ms).
+ *    - Standard: 50 threads hit PostgreSQL at once -> HikariCP pool starvation (>250ms timeout) & HTTP 500!
+ *    - Mutex (Fix): Only 1 thread queries PostgreSQL; 49 threads spin-poll Redis in parallel (~85ms).
  * 2. Cache Penetration (Scraper Bot Phantom Item Attack):
  *    - Probing non-existent IDs.
- *    - Naive: 100% of requests hit PostgreSQL every single time.
- *    - Sentinel: 1st probe caches empty sentinel; subsequent requests return from Redis in <1ms.
+ *    - Standard: 100% of requests hit PostgreSQL every single time.
+ *    - Sentinel (Fix): 1st probe caches empty sentinel; subsequent requests return from Redis in <1ms.
  * 3. Invalidation Cascades (Midnight ERP Batch Sync vs TTL Jitter):
- *    - Naive: 20 keys with synchronized fixed TTL expire at the exact same second -> 100% simultaneous DB miss wave!
- *    - Jitter: Keys expire staggered across a random window -> DB misses smoothed out, 0 pool contention!
+ *    - Standard: 20 keys with synchronized fixed TTL expire at the exact same second -> 100% simultaneous DB miss wave!
+ *    - Jitter (Fix): Keys expire staggered across a random window -> DB misses smoothed out, 0 pool contention!
+ *
+ * Usage:
+ *   java CacheStampedeLoadTest [scenario] [variant] [duration] [cooldown]
+ *
+ * Arguments:
+ *   scenario : all | stampede | penetration | cascade          (default: all)
+ *   variant  : standard | fix | both                          (default: both)
+ *   duration : sustained traffic duration in seconds          (default: 30)
+ *   cooldown : Prometheus breathing room between runs (s)     (default: 15)
  */
 public class CacheStampedeLoadTest {
 
     private static final String BASE_URL = "http://localhost:8080/api/catalog";
     private static final int CONCURRENCY = 50;
-    private static final int SUSTAINED_DURATION_SECONDS = 15;
+    private static final int DEFAULT_DURATION_SECONDS = 30;
+    private static final int DEFAULT_COOLDOWN_SECONDS = 15;
 
     public static void main(String[] args) throws Exception {
-        String testType = args.length > 0 ? args[0].toLowerCase() : "all";
-        int duration = args.length > 1 ? Integer.parseInt(args[1]) : SUSTAINED_DURATION_SECONDS;
+        // Parse arguments: [scenario] [variant] [duration] [cooldown]
+        String testType = "all";
+        String variant = "both";
+        int duration = DEFAULT_DURATION_SECONDS;
+        int cooldown = DEFAULT_COOLDOWN_SECONDS;
+
+        if (args.length > 0) {
+            testType = args[0].toLowerCase();
+        }
+
+        if (args.length > 1) {
+            String arg1 = args[1].toLowerCase();
+            if (arg1.matches("\\d+")) {
+                duration = Integer.parseInt(arg1);
+            } else {
+                variant = normalizeVariant(arg1);
+            }
+        }
+
+        if (args.length > 2) {
+            String arg2 = args[2].toLowerCase();
+            if (arg2.matches("\\d+")) {
+                duration = Integer.parseInt(arg2);
+            } else {
+                variant = normalizeVariant(arg2);
+            }
+        }
+
+        if (args.length > 3) {
+            try {
+                cooldown = Integer.parseInt(args[3]);
+            } catch (NumberFormatException ignored) {}
+        }
+
+        boolean runStandard = "both".equals(variant) || "standard".equals(variant);
+        boolean runFix = "both".equals(variant) || "fix".equals(variant);
 
         HttpClient client = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(5))
@@ -42,7 +86,9 @@ public class CacheStampedeLoadTest {
 
         System.out.println("=========================================================================");
         System.out.println(" BREAK THE CODE — EPISODE 3: CACHE LOAD BENCHMARK");
-        System.out.printf(" Concurrency: %d threads | Sustained Duration: %d seconds per scenario%n", CONCURRENCY, duration);
+        System.out.printf(" Scenario: %s | Variant: %s | Duration: %ds | Cooldown: %ds%n",
+                testType.toUpperCase(), variant.toUpperCase(), duration, cooldown);
+        System.out.printf(" Concurrency: %d concurrent virtual threads%n", CONCURRENCY);
         System.out.println("=========================================================================");
 
         // Warm up JVM JIT, HTTP connection pools, and Redisson Netty connections
@@ -52,49 +98,91 @@ public class CacheStampedeLoadTest {
 
         if ("all".equals(testType) || "stampede".equals(testType)) {
             System.out.println("=========================================================================");
-            System.out.printf(" EXPERIMENT 1: CACHE STAMPEDE / THUNDERING HERD (%d Threads, %ds Sustained)%n", CONCURRENCY, duration);
+            System.out.printf(" EXPERIMENT 1: CACHE STAMPEDE / THUNDERING HERD (%d Threads, %ds Duration)%n", CONCURRENCY, duration);
+            System.out.printf(" Target Variant: %s%n", variant.toUpperCase());
             System.out.println("=========================================================================");
 
-            inspectCacheState(client, "catalog::hot-deal", "INITIAL CACHE STATE");
+            if (runStandard) {
+                inspectCacheState(client, "catalog::hot-deal", "INITIAL CACHE STATE");
+                runStampedeBenchmark(client, "STANDARD CACHE-ASIDE (All 50 threads hit DB simultaneously)", "/hot-deal/standard", duration);
+            }
 
-            runStampedeBenchmark(client, "NAIVE CACHE-ASIDE (All 50 threads hit DB simultaneously)", "/hot-deal/naive", duration);
-            System.out.println("\n[*] Cooling down for 3 seconds before Mutex benchmark...");
-            Thread.sleep(3000);
+            if (runStandard && runFix) {
+                breathe(cooldown);
+            }
 
-            runStampedeBenchmark(client, "DISTRIBUTED MUTEX + DCL (Only 1 thread hits DB; 49 spin-poll Redis)", "/hot-deal/mutex", duration);
-
-            inspectCacheState(client, "catalog::hot-deal", "FINAL CACHE STATE AFTER MUTEX BENCHMARK");
+            if (runFix) {
+                runStampedeBenchmark(client, "DISTRIBUTED MUTEX + DCL (Only 1 thread hits DB; 49 spin-poll Redis)", "/hot-deal/mutex", duration);
+                inspectCacheState(client, "catalog::hot-deal", "FINAL CACHE STATE AFTER MUTEX BENCHMARK");
+            }
         }
 
         if ("all".equals(testType) || "penetration".equals(testType)) {
             System.out.println("\n=========================================================================");
-            System.out.printf(" EXPERIMENT 2: CACHE PENETRATION (%d Concurrent Threads, %ds Sustained)%n", CONCURRENCY, duration);
+            System.out.printf(" EXPERIMENT 2: CACHE PENETRATION (%d Concurrent Threads, %ds Duration)%n", CONCURRENCY, duration);
+            System.out.printf(" Target Variant: %s%n", variant.toUpperCase());
             System.out.println("=========================================================================");
-            runPenetrationBenchmark(client, "NAIVE PENETRATION (Null is never cached; 100% hit DB)", "/product/invalid-uuid-999/naive", false, duration);
-            System.out.println("\n[*] Cooling down for 3 seconds before Sentinel benchmark...");
-            Thread.sleep(3000);
-            runPenetrationBenchmark(client, "OPTIMIZED SENTINEL (Sentinel cached; 100% hit Redis in <1ms)", "/product/invalid-uuid-999/sentinel", true, duration);
 
-            inspectCacheState(client, "catalog::product::invalid-uuid-999", "SENTINEL CACHE STATE FOR NON-EXISTENT ID");
+            if (runStandard) {
+                runPenetrationBenchmark(client, "STANDARD PENETRATION (Null is never cached; 100% hit DB)", "/product/invalid-uuid-999/standard", false, duration);
+            }
+
+            if (runStandard && runFix) {
+                breathe(cooldown);
+            }
+
+            if (runFix) {
+                runPenetrationBenchmark(client, "OPTIMIZED SENTINEL (Sentinel cached; 100% hit Redis in <1ms)", "/product/invalid-uuid-999/sentinel", true, duration);
+                inspectCacheState(client, "catalog::product::invalid-uuid-999", "SENTINEL CACHE STATE FOR NON-EXISTENT ID");
+            }
         }
 
         if ("all".equals(testType) || "cascade".equals(testType)) {
             System.out.println("\n=========================================================================");
             System.out.println(" EXPERIMENT 3: INVALIDATION CASCADES (Midnight ERP Sync vs TTL Jitter)");
+            System.out.printf(" Target Variant: %s%n", variant.toUpperCase());
             System.out.println("=========================================================================");
-            runCascadeBenchmark(client, "NAIVE FIXED TTL (20 keys expire simultaneously at t=4s -> 100% Miss Spike)", "naive", 20);
-            System.out.println("\n[*] Cooling down for 3 seconds before TTL Jitter benchmark...");
-            Thread.sleep(3000);
-            runCascadeBenchmark(client, "OPTIMIZED TTL JITTER (20 keys expire staggered across 4s-11s window)", "jitter", 20);
+
+            if (runStandard) {
+                runCascadeBenchmark(client, "STANDARD FIXED TTL (20 keys expire simultaneously at t=4s -> 100% Miss Spike)", "standard", 20);
+            }
+
+            if (runStandard && runFix) {
+                breathe(cooldown);
+            }
+
+            if (runFix) {
+                runCascadeBenchmark(client, "OPTIMIZED TTL JITTER (20 keys expire staggered across 4s-11s window)", "jitter", 20);
+            }
         }
 
         // Print final Prometheus counters
         printPrometheusSummary(client);
     }
 
+    private static String normalizeVariant(String raw) {
+        if ("naive".equals(raw) || "standard".equals(raw)) {
+            return "standard";
+        }
+        if ("fix".equals(raw) || "mutex".equals(raw) || "sentinel".equals(raw) || "jitter".equals(raw) || "optimized".equals(raw)) {
+            return "fix";
+        }
+        return "both";
+    }
+
+    private static void breathe(int seconds) throws InterruptedException {
+        System.out.println();
+        System.out.printf("[*] Prometheus Breathing Window: Cooling down for %d seconds so 15s/30s scrape buffers settle to baseline...%n", seconds);
+        for (int remaining = seconds; remaining > 0; remaining--) {
+            System.out.printf("    [Prometheus Settling] %2d seconds remaining...\r", remaining);
+            Thread.sleep(1000);
+        }
+        System.out.println("    [Prometheus Settling] Baseline cleared! Proceeding to the optimized fix run...   \n");
+    }
+
     private static void warmup(HttpClient client) {
         try {
-            HttpRequest req1 = HttpRequest.newBuilder().uri(URI.create(BASE_URL + "/hot-deal/naive")).GET().build();
+            HttpRequest req1 = HttpRequest.newBuilder().uri(URI.create(BASE_URL + "/hot-deal/standard")).GET().build();
             HttpRequest req2 = HttpRequest.newBuilder().uri(URI.create(BASE_URL + "/hot-deal/mutex")).GET().build();
             client.send(req1, HttpResponse.BodyHandlers.discarding());
             client.send(req2, HttpResponse.BodyHandlers.discarding());
@@ -273,7 +361,7 @@ public class CacheStampedeLoadTest {
         System.out.println("\n>>> SCENARIO: " + title);
         System.out.println("Endpoint: POST " + BASE_URL + "/sync-erp?strategy=" + strategy + "&count=" + productCount);
 
-        // 1. Trigger ERP Batch Sync with the requested strategy (naive = fixed 4s TTL, jitter = 4s-11s TTL)
+        // 1. Trigger ERP Batch Sync with the requested strategy (standard = fixed 4s TTL, jitter = 4s-11s TTL)
         HttpRequest syncReq = HttpRequest.newBuilder()
                 .uri(URI.create(BASE_URL + "/sync-erp?strategy=" + strategy + "&count=" + productCount))
                 .POST(HttpRequest.BodyPublishers.noBody()).build();
@@ -305,7 +393,7 @@ public class CacheStampedeLoadTest {
                         startGate.await();
                         long reqStart = System.currentTimeMillis();
                         HttpRequest request = HttpRequest.newBuilder()
-                                .uri(URI.create(BASE_URL + "/product/" + prodId + "/naive"))
+                                .uri(URI.create(BASE_URL + "/product/" + prodId + "/standard"))
                                 .timeout(Duration.ofMillis(4000))
                                 .GET().build();
 
@@ -365,7 +453,7 @@ public class CacheStampedeLoadTest {
         } else {
             System.out.printf(" Failures / Timeouts: 0 (100%% Healthy)%n");
         }
-        System.out.printf(" Latency (min/p50/p95/p99/max): %d / %d / %d / %d / %d ms%n", min, p50, p95, p99, max);
+        System.out.printf(" Latency (min/p50/p95/p99/max): %d / %d / %d / %d ms%n", min, p50, p95, p99, max);
     }
 
     private static void printPrometheusSummary(HttpClient client) {

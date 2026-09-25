@@ -48,6 +48,15 @@ services:
     depends_on:
       - redis
 
+  redis-insight:
+    image: redis/redisinsight:latest
+    container_name: btc-redis-insight
+    restart: unless-stopped
+    ports:
+      - "5540:5540"
+    depends_on:
+      - redis
+
   prometheus:
     image: prom/prometheus:latest
     container_name: btc-prometheus

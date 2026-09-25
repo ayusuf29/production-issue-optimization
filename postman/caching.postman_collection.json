@@ -1,0 +1,607 @@
+{
+  "info": {
+    "_postman_id": "e3c8b1a0-94f2-4e56-b789-9182736450ab",
+    "name": "Episode 3 — Caching: Stampede, Penetration & Cascades",
+    "description": "Postman collection for testing single requests across Standard vs Fix implementations in CatalogService:\n1. Cache Stampede: Standard vs Distributed Mutex + DCL\n2. Cache Penetration: Standard vs Empty Sentinel Cache\n3. Invalidation Cascades: Standard Synchronized TTL vs TTL Jitter\n4. Diagnostic & Inspection Endpoints",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "01 - Cache Stampede (Hot Deal)",
+      "item": [
+        {
+          "name": "1.1 Standard Hot Deal (Unprotected Cache-Aside)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/catalog/hot-deal/standard",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "catalog", "hot-deal", "standard"]
+            },
+            "description": "STANDARD (Baseline): Basic cache-aside pattern without concurrency protection. If the cache key is cold or evicted, every incoming request concurrently queries PostgreSQL (80ms simulated workload) causing database connection pool starvation under concurrency."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test(\"Has product data\", function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.id).to.eql(\"hot-deal\");",
+                  "    pm.expect(json.name).to.include(\"BTC Ultra Gaming Rig\");",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "1.2 FIX: Distributed Mutex + DCL Hot Deal",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/catalog/hot-deal/mutex",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "catalog", "hot-deal", "mutex"]
+            },
+            "description": "FIX: Protected by Redisson Distributed Mutex (RLock) + Double-Checked Locking (DCL) + TTL Jitter. Only 1 single thread queries PostgreSQL when cache expires; all concurrent threads spin-poll Redis in parallel and return the warm key in ~85ms."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test(\"Has product data\", function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.id).to.eql(\"hot-deal\");",
+                  "    pm.expect(json.price).to.be.above(0);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "1.3 FIX: Hot Deal with Strategy Query Param (?strategy=mutex)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/catalog/hot-deal?strategy=mutex",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "catalog", "hot-deal"],
+              "query": [
+                {
+                  "key": "strategy",
+                  "value": "mutex",
+                  "description": "Allowed values: 'standard' or 'mutex'"
+                }
+              ]
+            },
+            "description": "Alternative query parameter routing: sets strategy=mutex to activate the distributed lock and double-checked caching defense."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "02 - Cache Penetration (Empty Sentinels)",
+      "item": [
+        {
+          "name": "2.1 Standard Penetration Probe (Non-Existent ID -> Repeated DB Hit)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/catalog/product/invalid-uuid-999/standard",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "catalog", "product", "invalid-uuid-999", "standard"]
+            },
+            "description": "STANDARD (Baseline): Probes a non-existent product ID. Because database returns NULL, standard cache-aside caches NOTHING in Redis. Every single consecutive call hits PostgreSQL, making the database vulnerable to scraper bot penetration attacks."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 404 (Not Found)\", function () {",
+                  "    pm.response.to.have.status(404);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "2.2 FIX: Empty Sentinel Defense (1st Probe Caches Sentinel -> Sub-1ms 404)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/catalog/product/invalid-uuid-999/sentinel",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "catalog", "product", "invalid-uuid-999", "sentinel"]
+            },
+            "description": "FIX: On the 1st miss, an Empty Sentinel placeholder is stored in Redis with a 60-second TTL. On the 2nd and subsequent calls, Redis detects the empty sentinel and returns 404 immediately in <1ms without touching PostgreSQL."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 404 (Handled by Sentinel)\", function () {",
+                  "    pm.response.to.have.status(404);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "2.3 Existing Product Lookup (prod-1 Warm Cache)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/catalog/product/prod-1/standard",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "catalog", "product", "prod-1", "standard"]
+            },
+            "description": "Fetches a valid, existing product ('prod-1'). Populates Redis with full entity details and cached specifications."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test(\"Product ID matches\", function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.id).to.eql(\"prod-1\");",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "03 - Invalidation Cascades & TTL Jitter (ERP Sync)",
+      "item": [
+        {
+          "name": "3.1 Standard ERP Sync (Fixed 4s TTL -> Simultaneous Expiration)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/catalog/sync-erp?strategy=standard&count=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "catalog", "sync-erp"],
+              "query": [
+                {
+                  "key": "strategy",
+                  "value": "standard",
+                  "description": "Sets all synchronized keys with identical 4.0s expiration"
+                },
+                {
+                  "key": "count",
+                  "value": "20",
+                  "description": "Number of catalog products to synchronize"
+                }
+              ]
+            },
+            "description": "STANDARD (Baseline): Simulates a midnight ERP batch sync where 20 products receive the exact same 4-second TTL. At t=4s, all 20 keys expire in the exact same millisecond, triggering an Invalidation Cascade miss-spike on the database."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test(\"Fixed TTL of 4 seconds confirmed\", function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.useJitter).to.eql(false);",
+                  "    pm.expect(json.items[0].ttlSeconds).to.eql(4);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "3.2 FIX: ERP Sync with TTL Jitter (Staggered Expiration 4s-11s)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/catalog/sync-erp?strategy=jitter&count=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "catalog", "sync-erp"],
+              "query": [
+                {
+                  "key": "strategy",
+                  "value": "jitter",
+                  "description": "Applies random TTL jitter (4s - 11s) to each key"
+                },
+                {
+                  "key": "count",
+                  "value": "20",
+                  "description": "Number of catalog products to synchronize"
+                }
+              ]
+            },
+            "description": "FIX: Adds randomized TTL jitter (4s - 11s) across synchronized items. Expirations are smoothly distributed across time, completely defusing simultaneous cache miss spikes."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test(\"Jitter is enabled with varying TTLs\", function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.useJitter).to.eql(true);",
+                  "    pm.expect(json.items.length).to.be.above(0);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "04 - Cache Inspection & Diagnostic Utilities",
+      "item": [
+        {
+          "name": "4.1 Evict Hot Deal Key (Reset to Cold Cache)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/catalog/evict?key=catalog::hot-deal",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "catalog", "evict"],
+              "query": [
+                {
+                  "key": "key",
+                  "value": "catalog::hot-deal",
+                  "description": "The exact Redis cache key to evict"
+                }
+              ]
+            },
+            "description": "Deletes the hot deal cache key from Redis to simulate a cold start or cache expiration before firing benchmark or single-request tests."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test(\"Eviction confirmed\", function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.message).to.include(\"catalog::hot-deal\");",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "4.2 Evict Phantom Product Key (Reset Sentinel Test)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/catalog/evict?key=catalog::product::invalid-uuid-999",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "catalog", "evict"],
+              "query": [
+                {
+                  "key": "key",
+                  "value": "catalog::product::invalid-uuid-999",
+                  "description": "The sentinel cache key to remove"
+                }
+              ]
+            },
+            "description": "Clears any cached empty sentinel in Redis for product ID 'invalid-uuid-999'."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "4.3 Inspect Hot Deal Cache Key State in Redis",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/catalog/inspect?key=catalog::hot-deal",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "catalog", "inspect"],
+              "query": [
+                {
+                  "key": "key",
+                  "value": "catalog::hot-deal",
+                  "description": "Redis key to inspect"
+                }
+              ]
+            },
+            "description": "Returns raw diagnostics from Redis: whether the key exists, its remaining TTL in seconds, and deserialized JSON product payload."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test(\"Contains inspection metadata\", function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json).to.have.property(\"exists\");",
+                  "    pm.expect(json).to.have.property(\"ttlSeconds\");",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "4.4 Inspect Sentinel Cache Key State in Redis",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/catalog/inspect?key=catalog::product::invalid-uuid-999",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "catalog", "inspect"],
+              "query": [
+                {
+                  "key": "key",
+                  "value": "catalog::product::invalid-uuid-999",
+                  "description": "Redis sentinel key to inspect"
+                }
+              ]
+            },
+            "description": "Inspects the empty sentinel key in Redis. Confirms that isEmptySentinel: true and displays remaining TTL (defaults to 60s)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test(\"Verified sentinel flag is present\", function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json).to.have.property(\"isEmptySentinel\");",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "05 - Observability & Actuator",
+      "item": [
+        {
+          "name": "5.1 Prometheus Metrics Scrape",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "text/plain",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/actuator/prometheus",
+              "host": ["{{baseUrl}}"],
+              "path": ["actuator", "prometheus"]
+            },
+            "description": "Scrapes real-time Micrometer Prometheus metrics including 'cache_gets_total', 'cache_lock_acquire_seconds', and 'hikaricp_connections_*'."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test(\"Contains cache metrics\", function () {",
+                  "    pm.expect(pm.response.text()).to.include(\"cache_gets_total\");",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "5.2 Spring Boot Health Check",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/actuator/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["actuator", "health"]
+            },
+            "description": "Verifies that the Spring Boot application, PostgreSQL connection pool, and Redis connections are UP."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test(\"Application status is UP\", function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.status).to.eql(\"UP\");",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    }
+  ]
+}

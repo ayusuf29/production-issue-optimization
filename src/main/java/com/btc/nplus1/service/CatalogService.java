@@ -80,19 +80,19 @@ public class CatalogService {
     // =========================================================================
 
     /**
-     * Naive cache-aside implementation:
+     * Standard cache-aside implementation (The baseline / naive developer trap):
      * Vulnerable to Cache Stampede under concurrent requests when the key expires or is deleted.
      */
-    @Observed(name = "catalog.service.hotdeal.naive", contextualName = "get-hot-deal-naive")
-    public ProductCatalogDTO getHotDealNaive() {
+    @Observed(name = "catalog.service.hotdeal.standard", contextualName = "get-hot-deal-standard")
+    public ProductCatalogDTO getHotDealStandard() {
         ProductCatalogDTO data = redisTemplate.opsForValue().get(HOT_DEAL_KEY);
         if (data == null) {
             missCounter.increment();
-            log.warn("[CACHE MISS] Key '{}' not in Redis! Querying DB without lock (holding DB connection 80ms)...", HOT_DEAL_KEY);
+            log.warn("[CACHE MISS (Standard)] Key '{}' not in Redis! Querying DB without lock (holding DB connection 80ms)...", HOT_DEAL_KEY);
             data = loadFromDatabase("hot-deal");
             Duration ttl = Duration.ofMinutes(5);
             redisTemplate.opsForValue().set(HOT_DEAL_KEY, data, ttl);
-            log.info("[CACHE POPULATED] Key '{}' saved to Redis (TTL: {}s). Content: id={}, name='{}', price=${}",
+            log.info("[CACHE POPULATED (Standard)] Key '{}' saved to Redis (TTL: {}s). Content: id={}, name='{}', price=${}",
                     HOT_DEAL_KEY, ttl.toSeconds(), data.getId(), data.getName(), data.getPrice());
         } else {
             hitCounter.increment();
@@ -100,6 +100,11 @@ public class CatalogService {
                     HOT_DEAL_KEY, data.getName(), data.getPrice());
         }
         return data;
+    }
+
+    @Deprecated
+    public ProductCatalogDTO getHotDealNaive() {
+        return getHotDealStandard();
     }
 
     /**
@@ -189,29 +194,34 @@ public class CatalogService {
     // =========================================================================
 
     /**
-     * Naive Product lookup:
+     * Standard Product lookup (The baseline / naive trap):
      * Vulnerable to Cache Penetration when clients query non-existent IDs repeatedly.
      */
-    @Observed(name = "catalog.service.product.naive", contextualName = "get-product-naive")
-    public ProductCatalogDTO getProductNaive(String productId) {
+    @Observed(name = "catalog.service.product.standard", contextualName = "get-product-standard")
+    public ProductCatalogDTO getProductStandard(String productId) {
         String cacheKey = PRODUCT_KEY_PREFIX + productId;
         ProductCatalogDTO data = redisTemplate.opsForValue().get(cacheKey);
 
         if (data == null) {
             missCounter.increment();
-            log.warn("[CACHE MISS (Penetration Vulnerable)] Product '{}' not in Redis. Querying DB directly...", productId);
+            log.warn("[CACHE MISS (Standard Penetration)] Product '{}' not in Redis. Querying DB directly...", productId);
             data = loadProductFromDb(productId);
             if (data != null) {
                 redisTemplate.opsForValue().set(cacheKey, data, Duration.ofMinutes(30));
                 log.info("[CACHE POPULATED] Product '{}' saved to Redis.", productId);
             } else {
-                log.warn("[PENETRATION RISK] Product '{}' is NULL in DB! Nothing saved to Redis -> Next request will hit DB again!", productId);
+                log.warn("[STANDARD PENETRATION RISK] Product '{}' is NULL in DB! Nothing saved to Redis -> Next request will hit DB again!", productId);
             }
         } else {
             hitCounter.increment();
             log.info("[CACHE HIT] Product '{}' found in Redis.", productId);
         }
         return data;
+    }
+
+    @Deprecated
+    public ProductCatalogDTO getProductNaive(String productId) {
+        return getProductStandard(productId);
     }
 
     /**
@@ -304,7 +314,7 @@ public class CatalogService {
     /**
      * Simulates Midnight ERP Catalog Sync Job.
      * Synchronizes a batch of products into Redis.
-     * - "naive": Fixed synchronized expiration (e.g. 4 seconds) -> Causes Invalidation Cascade.
+     * - "standard" (or "naive"): Fixed synchronized expiration (e.g. 4 seconds) -> Causes Invalidation Cascade.
      * - "jitter": Randomized expiration with TTL jitter (4s - 12s) -> Defuses Cascade.
      */
     public Map<String, Object> syncErpCatalog(String strategy, int count) {
@@ -318,8 +328,8 @@ public class CatalogService {
             if (dto != null) {
                 String cacheKey = PRODUCT_KEY_PREFIX + prodId;
                 long ttlSec = useJitter
-                        ? 4 + ThreadLocalRandom.current().nextInt(8) // 4 to 11 seconds
-                        : 4; // Exactly 4 seconds for all keys!
+                        ? 20 + ThreadLocalRandom.current().nextInt(8) // 20 to 11 seconds
+                        : 20; // Exactly 20 seconds for all keys (standard fixed TTL)!
 
                 Duration ttl = Duration.ofSeconds(ttlSec);
                 redisTemplate.opsForValue().set(cacheKey, dto, ttl);

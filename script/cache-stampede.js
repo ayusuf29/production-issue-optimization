@@ -21,7 +21,7 @@ export const options = {
 
 export function setup() {
   const baseUrl = __ENV.BASE_URL || 'http://localhost:8080';
-  const target = __ENV.TARGET || 'naive'; // 'naive' or 'mutex'
+  const target = __ENV.TARGET || 'standard'; // 'standard' (or 'naive') or 'mutex'
 
   console.log(`Setting up test against: ${baseUrl}/api/catalog/hot-deal/${target}`);
 
@@ -35,7 +35,7 @@ export function setup() {
 
 export default function () {
   const baseUrl = __ENV.BASE_URL || 'http://localhost:8080';
-  const target = __ENV.TARGET || 'naive';
+  const target = __ENV.TARGET || 'standard';
 
   const res = http.get(`${baseUrl}/api/catalog/hot-deal/${target}`, {
     timeout: '3s',

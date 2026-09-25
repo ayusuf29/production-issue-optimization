@@ -8,11 +8,8 @@ logging:
     com.btc.nplus1: DEBUG
     org.springframework.boot.actuate.autoconfigure.tracing: DEBUG
     io.micrometer.tracing: DEBUG
-    # Session Metrics logging in Hibernate
-    org.hibernate.session.metrics: DEBUG
     org.hibernate.stat: DEBUG
     org.hibernate.statistics: DEBUG
-    org.hibernate.engine.internal.StatisticalLoggingSessionEventListener: DEBUG
     org.hibernate.SQL: INFO
 
 spring:
